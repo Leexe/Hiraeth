@@ -11,6 +11,7 @@ namespace CharacterControllerPlayerInput {
         public Quaternion CameraRotation;
         public bool DashRequested;
         public bool JumpRequested;
+        public bool TeleportRequested;
         public bool CrouchDown;
     }
 }
@@ -79,9 +80,11 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     [Tooltip("Should turning around decrease player momentum in the air")]
     [SerializeField] private bool _momentumAirMovementToggle;
     [Tooltip("How fast the player moves while in the air relative to their base movespeed")]
-    [SerializeField] private float _airMovespeedMult = 1f;
+    [SerializeField] private float _airBaseSpeedMult = 1f;
+    [Tooltip("How fast the player accelerates up to air base speed")]
+    [SerializeField] private float _airAccelerationToBase = 1f;
     [Tooltip("How easily the player is able to change direction in the air")]
-    [SerializeField] private float _airAcceleration = 1f;
+    [SerializeField] private float _airRotationSmoothing = 1f;
     [Tooltip("Air drag")]
     [SerializeField] private float _drag = 0.00001f;
 
@@ -127,6 +130,8 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     [Header("Misc")]
     [Tooltip("Layer masks that indicates what layers the character collider to ignore")]
     [SerializeField] private LayerMask _ignoredLayers;
+    [Tooltip("Position where the player teleports back to")]
+    [SerializeField] private Transform _teleportTransform;
 
     // Gravity
     // Look & Input Vectors
@@ -152,6 +157,7 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     private bool _crouchDown;
     private Collider[] _probedColliders = new Collider[8];
     // Misc.
+    private bool _teleportRequested = false; 
     private float _movementMult = 1f; 
     private float _movementAcceleration = 15f; 
     private float _movementDeacceleration = 20f; 
@@ -418,6 +424,13 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         _timeSinceDashRequested += Time.deltaTime;
     }
 
+    private void HandleTeleport() {
+        if (_teleportRequested) {
+            _motor.MoveCharacter(_teleportTransform.position);
+            _teleportRequested = false;
+        }
+    }
+
 
 
     /** ICharacterController Implementations **/
@@ -450,7 +463,7 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
                 }
                 // If not inputting and not sliding, apply deacceleration 
                 else {
-                    currentVelocity = Vector3.Lerp(currentVelocity, targetVelocityVector * _movementMult, 1 - Mathf.Exp(-_stableDeacceleration * deltaTime));
+                    currentVelocity = Vector3.Lerp(currentVelocity, targetVelocityVector * _movementMult, 1 - Mathf.Exp(-_movementDeacceleration * deltaTime));
                 }
             }   
             // If the player is in the air or on a slope
@@ -459,12 +472,12 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
                 if (_inputVector.sqrMagnitude > 0f) {
                     // Find the target velocity of the player in the air
                     Vector3 horizontalVelocity = Vector3.ProjectOnPlane(currentVelocity, _motor.CharacterUp);
-                    if ((_baseMovespeed * _airMovespeedMult) >= horizontalVelocity.magnitude) {
+                    if ((_baseMovespeed * _airBaseSpeedMult) >= horizontalVelocity.magnitude) {
                         // If the player's max air movespeed is more then their current horizontal velocity, set their target horizontal velocity to that
-                        targetVelocityVector = _inputVector * _baseMovespeed * _airMovespeedMult;
+                        targetVelocityVector = _inputVector * _baseMovespeed * _airBaseSpeedMult;
                     }
                     else {
-                        targetVelocityVector = _inputVector * horizontalVelocity.magnitude * _airMovespeedMult;
+                        targetVelocityVector = _inputVector * horizontalVelocity.magnitude;
                     }
 
                     // Preventing climbing on unstable ground while in the air
@@ -474,8 +487,12 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
                     }
 
                     // Calculate how hard it is to redirect movement in air
-                    Vector3 velocityDiff = Vector3.ProjectOnPlane(targetVelocityVector - currentVelocity, _gravity);
-                    currentVelocity += velocityDiff * _airAcceleration * deltaTime;
+                    // Vector3 velocityDiff = Vector3.ProjectOnPlane(targetVelocityVector - currentVelocity, _gravity);
+                    // currentVelocity += velocityDiff * _airAcceleration * deltaTime;
+
+                    // Turn the player in the air without decreasing velocity
+                    Vector3 turnVector = Vector3.Lerp(currentVelocity, targetVelocityVector, 1 - Mathf.Exp(-_airRotationSmoothing * deltaTime)).normalized * currentVelocity.magnitude;
+                    currentVelocity = Vector3.Lerp(turnVector, targetVelocityVector, 1 - Mathf.Exp(-_airAccelerationToBase * deltaTime));
                 }   
                 
                 // Add gravity to the gravity
@@ -563,6 +580,9 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
 
         // Handle Dashing
         HandleDash();
+
+        // Handle Teleporting
+        HandleTeleport();
     }
 
     public bool IsColliderValidForCollisions(Collider coll) {
@@ -618,12 +638,16 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         // Fill in the last time jump was inputted
         if (inputs.JumpRequested) {
             _timeSinceJumpRequested = 0f;
-            inputs.JumpRequested = true;
+            inputs.JumpRequested = false;
         }
         // Fill in the last time dash was inputted
         if (inputs.DashRequested) {
             _timeSinceDashRequested = 0f;
-            inputs.JumpRequested = true;
+            inputs.DashRequested = false;
+        }
+        if (inputs.TeleportRequested) {
+            _teleportRequested = true;
+            inputs.TeleportRequested = false;
         }
         _crouchDown = inputs.CrouchDown;
     }

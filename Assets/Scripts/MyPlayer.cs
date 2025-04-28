@@ -9,6 +9,7 @@ public class MyPlayer : MonoBehaviour {
     private Vector3 _horizontalMovementInput;
     private bool _dashPerformed = false;
     private bool _jumpPerformed = false;
+    private bool _teleportPerfomed = false;
     private bool _crouchDown = false;
 
     private void Awake() {
@@ -26,6 +27,7 @@ public class MyPlayer : MonoBehaviour {
         _inputs.Movement.Crouch.canceled += OnCrouchInputCanceled;
         _inputs.Movement.Jump.performed += OnJumpInputPerformed;
         _inputs.Movement.Dash.performed += OnDashInputPerformed;
+        _inputs.Movement.Teleport.performed += OnTeleportPerformed;
     }
 
     private void OnDisable() {
@@ -34,6 +36,7 @@ public class MyPlayer : MonoBehaviour {
         _inputs.Movement.Crouch.canceled -= OnCrouchInputCanceled;
         _inputs.Movement.Jump.performed += OnJumpInputPerformed;
         _inputs.Movement.Dash.performed += OnDashInputPerformed;
+        _inputs.Movement.Teleport.performed -= OnTeleportPerformed;
     }
 
     private void Update() {
@@ -59,6 +62,10 @@ public class MyPlayer : MonoBehaviour {
         _dashPerformed = true;
     }
 
+    private void OnTeleportPerformed(InputAction.CallbackContext context) {
+        _teleportPerfomed = true;
+    }
+
     private void HandleCharacterInputs() {
         CharacterControllerPlayerInput.Inputs playerInputs = new CharacterControllerPlayerInput.Inputs();
 
@@ -72,6 +79,10 @@ public class MyPlayer : MonoBehaviour {
         if (_dashPerformed) {
             playerInputs.DashRequested = true;
             _dashPerformed = false;
+        }
+        if (_teleportPerfomed) {
+            playerInputs.TeleportRequested = true;
+            _teleportPerfomed = false;
         }
 
         _characterController.FeedPlayerInput(ref playerInputs);
