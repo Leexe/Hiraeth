@@ -2,8 +2,7 @@ using KinematicCharacterController;
 using UnityEngine;
 using UnityEngine.Events;
 using PrimeTween;
-using UnityEngine.InputSystem;
-using Unity.Cinemachine;
+using UnityEngine.TextCore.Text;
 
 namespace CharacterControllerPlayerInput {
     public struct Inputs {
@@ -21,14 +20,16 @@ public enum MovementStates {
     sprinting = 1,
     sliding = 2,
     inAir = 3,
-    dashing = 4,
-    crouching = 5
+    groundDashing = 4,
+    airDashing = 5,
+    crouching = 6
 }
 
 public class MyCharacterController : MonoBehaviour, ICharacterController {
     [Header("References")]
     [SerializeField] private KinematicCharacterMotor _motor;
     [SerializeField] private GameObject _meshRoot;
+    [SerializeField] private StaminaSystem staminaSystem;
     
 
     [Header("Stable Movement")]
@@ -82,7 +83,7 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     [Tooltip("How fast the player moves while in the air relative to their base movespeed")]
     [SerializeField] private float _airBaseSpeedMult = 1f;
     [Tooltip("How fast the player accelerates up to air base speed")]
-    [SerializeField] private float _airAccelerationToBase = 1f;
+    [SerializeField] private float _airAcceleration = 1f;
     [Tooltip("How easily the player is able to change direction in the air")]
     [SerializeField] private float _airRotationSmoothing = 1f;
     [Tooltip("Air drag")]
@@ -92,6 +93,8 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     [Header("Dashes")]
     [Tooltip("How fast to dash")]
     [SerializeField] private float _dashForce = 7f;
+    [Tooltip("How long the player is stuck moving in a certain direction")]
+    [SerializeField] private float _dashStun = 0.8f;
     [Tooltip("A buffer for the dash input")]
     [SerializeField] private float _dashBuffer = 0.1f;
 
@@ -145,7 +148,7 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     private float _slideStunTimer = 0f;
     // Dash
     private float _timeSinceDashRequested = 0f;
-    private bool _jumpRequested;
+    private float _dashStunTimer = 0f;
     // Jumping
     private int _jumps = 0;
     private bool _canJump = true;
@@ -208,7 +211,7 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
             }
             case MovementStates.sliding: {
                 // If the stun timer is active and the player is grounded, do not allow the slide state to change
-                if (_slideStunTimer > 0) {
+                if (_slideStunTimer > 0f) {
                     return false;
                 }
                 // If the player can't uncrouch, transition to crouch state
@@ -222,6 +225,18 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
                 }
                 // Allow jumping 
                 _canJump = true;
+                break;
+            }
+            case MovementStates.groundDashing: {
+                if (_dashStunTimer > 0f) {
+                    return false;
+                }
+                break;
+            }
+            case MovementStates.airDashing: {
+                if (_dashStunTimer > 0f) {
+                    return false;
+                }
                 break;
             }
             default: {
@@ -256,6 +271,26 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
                 _movementDeacceleration = _stableDeacceleration;
                 break;
             }
+            case MovementStates.airDashing: {
+                _movementMult = 1f;
+                _movementAcceleration = _stableAcceleration;
+                _movementDeacceleration = _stableDeacceleration;
+                if (staminaSystem.ConsumeStamina()) {
+                    AddVelocityInPlayerInputDirection(_dashForce);
+                    _dashStunTimer = _dashStun;
+                }
+                break;
+            }
+            case MovementStates.groundDashing: {
+                _movementMult = 1f;
+                _movementAcceleration = _stableAcceleration;
+                _movementDeacceleration = _stableDeacceleration;
+                if (staminaSystem.ConsumeStamina()) {
+                    AddVelocityInPlayerInputDirection(_dashForce);
+                    _dashStunTimer = _dashStun;
+                }
+                break;
+            }
             case MovementStates.sliding: {
                 _movementMult = _slideSlowDown;
                 _movementAcceleration = _slidingDragSmoothing;
@@ -281,14 +316,8 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         }
     }
 
-
-
-    /** Private Methods **/
-
-
-
     private void HandleStates() {
-        // Slide state
+        // Slide, if the player is pressing the crouch button, the player is grounded, and they are moving past a certain threshold or are moving down a slope
         if (_crouchDown && 
             _motor.GroundingStatus.FoundAnyGround &&
             ((_state == MovementStates.sliding ? CurrentHorVelocity >= _slideSpeedExitThreshold : CurrentHorVelocity >= _slideSpeedThreshold) || 
@@ -300,6 +329,13 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
             if (_crouchDown && _motor.GroundingStatus.IsStableOnGround) {
                 TransitionState(MovementStates.crouching);
             }
+            // Ground Dash, if the player has stamina to consume, the player has pressed the dash button, are inputting in a direction, and not sliding/crouching/dashing
+            else if (staminaSystem.CanConsumeStamina() && 
+                _timeSinceDashRequested < _dashBuffer && 
+                _inputVector != Vector3.zero && 
+                (_state != MovementStates.sliding || _state != MovementStates.crouching || _state != MovementStates.groundDashing || _state != MovementStates.airDashing)) {
+                TransitionState(MovementStates.groundDashing);
+            }
             else if (_canSprint && _motor.GroundingStatus.IsStableOnGround) {
                 TransitionState(MovementStates.sprinting);
             }
@@ -309,9 +345,24 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         }
         // Air States
         else {
-            TransitionState(MovementStates.inAir);
+            // Air Dash, if the player has stamina to consume, the player has pressed the dash button, are inputting in a direction, and not sliding/crouching/dashing
+            if (staminaSystem.CanConsumeStamina() && 
+                _timeSinceDashRequested < _dashBuffer && 
+                _inputVector != Vector3.zero && 
+                (_state != MovementStates.sliding || _state != MovementStates.crouching || _state != MovementStates.groundDashing || _state != MovementStates.airDashing)) {
+                TransitionState(MovementStates.airDashing);
+            }
+            else {
+                TransitionState(MovementStates.inAir);
+            }
         }
     }
+
+
+
+    /** Private Methods **/
+
+
 
     private Vector3 HandleGravity(Vector3 currentVelocity, float deltaTime) {
         float yVelocity = currentVelocity.y;
@@ -325,7 +376,6 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         return gravityToApply;
     }
 
-    // Handle Sprinting
     private void HandleSprinting(Vector3 currentVelocity, float deltaTime) {
         // The player can start sprinting only if they are on the ground and above a certain velocity
         if (!_canSprint && (_state != MovementStates.sliding) && _motor.GroundingStatus.IsStableOnGround && Vector3.ProjectOnPlane(currentVelocity, _motor.CharacterUp).magnitude > _runningTreshold) {
@@ -376,16 +426,6 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         _sprintTimer = 0f;
     }
 
-    private void HandleSlideDashDuration(float deltaTime) {
-        if (_state == MovementStates.sliding) {
-            // Allow jumping once stun duration is over or player is in the air
-            if (_slideStunTimer <= 0 || !_motor.GroundingStatus.FoundAnyGround) {
-                _canJump = true;
-            }
-        }
-        _slideStunTimer -= deltaTime;
-    }
-
     private Vector3 HandleSliding(Vector3 currentVelocity, Vector3 targetVelocityVector, float deltaTime) {
 
         // If the player is sliding down a slope, increase their velocity
@@ -414,14 +454,6 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         }
 
         return targetVelocityVector;
-    }
-    
-    private void HandleDash() {
-        if (_timeSinceDashRequested < _dashBuffer) {
-            AddVelocity(Vector3.ProjectOnPlane(_inputVector != Vector3.zero ? _inputVector.normalized : _lookVector.normalized, _motor.CharacterUp) * _dashForce);
-            _timeSinceDashRequested = _dashBuffer + 2f;
-        }
-        _timeSinceDashRequested += Time.deltaTime;
     }
 
     private void HandleTeleport() {
@@ -491,8 +523,9 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
                     // currentVelocity += velocityDiff * _airAcceleration * deltaTime;
 
                     // Turn the player in the air without decreasing velocity
-                    Vector3 turnVector = Vector3.Lerp(currentVelocity, targetVelocityVector, 1 - Mathf.Exp(-_airRotationSmoothing * deltaTime)).normalized * currentVelocity.magnitude;
-                    currentVelocity = Vector3.Lerp(turnVector, targetVelocityVector, 1 - Mathf.Exp(-_airAccelerationToBase * deltaTime));
+                    Vector3 horizontalCurrentVector = Vector3.ProjectOnPlane(currentVelocity, _gravity);
+                    Vector3 horizontalTurnVector = Vector3.Lerp(horizontalCurrentVector.normalized, targetVelocityVector.normalized, 1 - Mathf.Exp(-_airRotationSmoothing * deltaTime)).normalized * horizontalCurrentVector.magnitude;
+                    currentVelocity = Vector3.Lerp(horizontalTurnVector, horizontalTurnVector.normalized * targetVelocityVector.magnitude, 1 - Mathf.Exp(-_airAcceleration * deltaTime)) + Vector3.Project(currentVelocity, _gravity);
                 }   
                 
                 // Add gravity to the gravity
@@ -548,7 +581,12 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         // Handle Sprinting
         HandleSprinting(currentVelocity, deltaTime);
 
-        // Stop Movement
+        // Set vertical velocity to 0 
+        if (_state == MovementStates.airDashing) {
+            currentVelocity = Vector3.ProjectOnPlane(currentVelocity, _motor.CharacterUp);
+        }
+
+        // Set velocity to zero
         if (_zeroMovement) {
             currentVelocity = Vector3.zero;
         }
@@ -569,6 +607,23 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
             // Time kept for coyote time
             _timeSinceJumpAllowed += deltaTime;
         }
+    }
+
+    private void HandleSlideDashDuration(float deltaTime) {
+        if (_state == MovementStates.sliding) {
+            // Allow jumping once stun duration is over or player is in the air
+            if (_slideStunTimer <= 0 || !_motor.GroundingStatus.FoundAnyGround) {
+                _canJump = true;
+            }
+        }
+        _slideStunTimer -= deltaTime;
+    }
+
+    private void HandleDash() {
+        if (_dashStunTimer > 0) {
+            _dashStunTimer -= Time.deltaTime;
+        }
+        _timeSinceDashRequested += Time.deltaTime;
     }
 
     public void BeforeCharacterUpdate(float deltaTime) {
@@ -654,6 +709,10 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
 
     public void AddVelocity(Vector3 velocity) {
         _internalVelocityAdd += velocity;
+    }
+
+    public void AddVelocityInPlayerInputDirection(float force) {
+        _internalVelocityAdd += _inputVector.normalized * force;
     }
 
     public void ZeroMovement() {
