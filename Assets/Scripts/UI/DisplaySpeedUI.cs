@@ -6,7 +6,7 @@ public class DisplaySpeedUI : MonoBehaviour {
     [SerializeField] private MyCharacterController _characterController;
 
     private void Update() {
-        float horizontalVelocity = new Vector3(_characterController.CurrentVelocity.x, 0, _characterController.CurrentVelocity.z).magnitude;
+        float horizontalVelocity = _characterController.CurrentHorVelocity.magnitude;
         _textBox.text = "Speed: " + horizontalVelocity.ToString("0.0");
     }
 }

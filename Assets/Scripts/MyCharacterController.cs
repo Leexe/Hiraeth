@@ -170,7 +170,7 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     
     // Getters && Setters
     [HideInInspector] public Vector3 CurrentVelocity {get; private set;}
-    [HideInInspector] public float CurrentHorVelocity => Vector3.ProjectOnPlane(CurrentVelocity, _motor.CharacterUp).magnitude;
+    [HideInInspector] public Vector3 CurrentHorVelocity => Vector3.ProjectOnPlane(CurrentVelocity, _motor.CharacterUp);
 
     // Events
     [HideInInspector] public UnityEvent OnJump;
@@ -320,7 +320,7 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
         // Slide, if the player is pressing the crouch button, the player is grounded, and they are moving past a certain threshold or are moving down a slope
         if (_crouchDown && 
             _motor.GroundingStatus.FoundAnyGround &&
-            ((_state == MovementStates.sliding ? CurrentHorVelocity >= _slideSpeedExitThreshold : CurrentHorVelocity >= _slideSpeedThreshold) || 
+            ((_state == MovementStates.sliding ? CurrentHorVelocity.magnitude >= _slideSpeedExitThreshold : CurrentHorVelocity.magnitude >= _slideSpeedThreshold) || 
                 MovingDownASlope)) {
             TransitionState(MovementStates.sliding);
         }
@@ -427,7 +427,6 @@ public class MyCharacterController : MonoBehaviour, ICharacterController {
     }
 
     private Vector3 HandleSliding(Vector3 currentVelocity, Vector3 targetVelocityVector, float deltaTime) {
-
         // If the player is sliding down a slope, increase their velocity
         if (MovingDownASlope) {
             _movementMult = _slideSpeedMult;
