@@ -75,4 +75,6 @@ crashlytics-build.properties
 /[Aa]ssets/[Ss]treamingAssets/aa/*
 
 # Unity Version Control
-.plastic/
+.plastic/*
+.plastic/plastic.changes
+.plastic/plastic.wktree
