@@ -8,7 +8,7 @@ public class StaminaUI : MonoBehaviour {
 
     [Header("Values")]
     [Tooltip("How long the tooltip can be inactive before it disapears")]
-    [SerializeField] private StaminaSystem disapearAfterTime;
+    [SerializeField] private float disapearAfterTime;
     
     private float maxStamina;
     private float oneStaminaFillAmount;
