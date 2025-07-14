@@ -5,6 +5,7 @@ Hiraeth is an atmospheric 3D fps platformer game where your goal is to speedrun 
 This project was created during the spring quater of UCSB ECE184 - Introduction to Video Game Development.
 
 [![Watch the video](https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExczcwbTBvbjVndjEyNHIxZ2FieHh5eWUwNTk1ajFmcWt5Y2hmN2N5MyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/lfiQffhYjUK2rImDHY/giphy.gif)](https://youtu.be/Sxxv3YrGJi8)
+
 (click the gif to see the trailer)
 
 # Credits
