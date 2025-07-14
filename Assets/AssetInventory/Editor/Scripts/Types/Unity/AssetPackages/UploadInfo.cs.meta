@@ -3,8 +3,8 @@ guid: 7ecc54476fc54e86aad6f84c42fc6016
 timeCreated: 1660847043
 AssetOrigin:
   serializedVersion: 1
-  productId: 275893
-  packageName: Asset Inventory 2
-  packageVersion: 2.7.0
+  productId: 308224
+  packageName: Asset Inventory 3
+  packageVersion: 3.0
   assetPath: Assets/AssetInventory/Editor/Scripts/Types/Unity/AssetPackages/UploadInfo.cs
-  uploadId: 704734
+  uploadId: 755862

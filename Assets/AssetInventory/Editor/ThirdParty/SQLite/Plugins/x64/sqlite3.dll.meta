@@ -63,8 +63,8 @@ PluginImporter:
   assetBundleVariant: 
 AssetOrigin:
   serializedVersion: 1
-  productId: 275893
-  packageName: Asset Inventory 2
-  packageVersion: 2.7.0
+  productId: 308224
+  packageName: Asset Inventory 3
+  packageVersion: 3.0
   assetPath: Assets/AssetInventory/Editor/ThirdParty/SQLite/Plugins/x64/sqlite3.dll
-  uploadId: 704734
+  uploadId: 755862

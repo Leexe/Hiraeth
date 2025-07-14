@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -9,34 +10,31 @@ namespace AssetInventory
 {
     public sealed class CaptionCreator : AssetImporter
     {
-        public async Task Index()
+        public async Task Run()
         {
             List<string> types = new List<string>();
-            if (AI.Config.aiForPrefabs) types.AddRange(AI.TypeGroups["Prefabs"]);
-            if (AI.Config.aiForImages) types.AddRange(AI.TypeGroups["Images"]);
-            if (AI.Config.aiForModels) types.AddRange(AI.TypeGroups["Models"]);
+            if (AI.Config.aiForPrefabs) types.AddRange(AI.TypeGroups[AI.AssetGroup.Prefabs]);
+            if (AI.Config.aiForImages) types.AddRange(AI.TypeGroups[AI.AssetGroup.Images]);
+            if (AI.Config.aiForModels) types.AddRange(AI.TypeGroups[AI.AssetGroup.Models]);
 
             string typeStr = string.Join("\",\"", types);
             string query = "select *, AssetFile.Id as Id from AssetFile inner join Asset on Asset.Id = AssetFile.AssetId where Asset.Exclude = false and Asset.UseAI = true and AssetFile.Type in (\"" + typeStr + "\") and AssetFile.AICaption is null and (AssetFile.PreviewState = ? or AssetFile.PreviewState = ?) order by Asset.Id desc";
             List<AssetInfo> files = DBAdapter.DB.Query<AssetInfo>(query, AssetFile.PreviewOptions.Custom, AssetFile.PreviewOptions.Provided).ToList();
 
-            await Index(files);
+            await Run(files);
         }
 
-        public async Task Index(List<AssetInfo> files)
+        public async Task Run(List<AssetInfo> files)
         {
-            ResetState(false);
-            int progressId = MetaProgress.Start("Creating AI captions");
-
             string previewFolder = AI.GetPreviewFolder();
 
             int chunkSize = AI.Config.blipChunkSize;
             bool toolChainWorking = true;
 
+            MainCount = files.Count;
             for (int i = 0; i < files.Count; i += chunkSize)
             {
                 if (CancellationRequested) break;
-                await Cooldown.Do();
                 await Task.Delay(AI.Config.aiPause * 1000); // crashes system otherwise after a while
 
                 List<AssetInfo> fileChunk = files.Skip(i).Take(chunkSize).ToList();
@@ -44,10 +42,7 @@ namespace AssetInventory
 
                 foreach (AssetInfo file in fileChunk)
                 {
-                    MetaProgress.Report(progressId, i + 1, files.Count, file.FileName);
-                    SubCount = files.Count;
-                    CurrentSub = $"Captioning {file.FileName}";
-                    SubProgress = i + 1;
+                    SetProgress(file.FileName, i + 1);
 
                     string previewFile = ValidatePreviewFile(file, previewFolder);
                     if (!string.IsNullOrEmpty(previewFile))
@@ -87,8 +82,6 @@ namespace AssetInventory
                 });
                 if (!toolChainWorking) break;
             }
-            MetaProgress.Remove(progressId);
-            ResetState(true);
         }
 
         public static List<BlipResult> CaptionImage(List<string> filenames)
@@ -96,7 +89,8 @@ namespace AssetInventory
             string blipType = AI.Config.blipType == 1 ? "--large" : "";
             string gpuUsage = AI.Config.aiUseGPU ? "--gpu" : "";
             string nameList = "\"" + string.Join("\" \"", filenames.Select(IOUtils.ToShortPath)) + "\"";
-            string result = IOUtils.ExecuteCommand("blip-caption", $"{blipType} {gpuUsage} --json {nameList}");
+            string command = AI.Config.aiToolPath != null ? Path.Combine(AI.Config.aiToolPath, "blip-caption") : "blip-caption";
+            string result = IOUtils.ExecuteCommand(command, $"{blipType} {gpuUsage} --json {nameList}");
 
             if (string.IsNullOrWhiteSpace(result)) return null;
 

@@ -1,0 +1,12 @@
+root = true
+
+[*]
+indent_style = tab
+indent_size = 4
+trim_trailing_whitespace = true
+insert_file_new_line = true
+csharp_new_line_before_open_brace = none
+
+# settings.json for vscode
+    "omnisharp.enableEditorConfigSupport": true,
+    "dotnet.server.useOmnisharp": true,

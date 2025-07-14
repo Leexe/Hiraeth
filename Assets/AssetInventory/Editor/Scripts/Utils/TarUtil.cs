@@ -55,7 +55,7 @@ namespace AssetInventory
                         {
                             destFile = Path.Combine(targetFolder, entry.Name);
                             string directoryName = Path.GetDirectoryName(destFile);
-                            if (!Directory.Exists(directoryName)) Directory.CreateDirectory(directoryName);
+                            Directory.CreateDirectory(directoryName);
 
                             using (FileStream fileStream = File.Create(destFile))
                             {

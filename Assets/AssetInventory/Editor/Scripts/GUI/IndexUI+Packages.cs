@@ -11,7 +11,9 @@ using UnityEditor.IMGUI.Controls;
 using UnityEditor.PackageManager;
 using UnityEngine;
 using static AssetInventory.AssetTreeViewControl;
+#if !UNITY_2021_2_OR_NEWER
 using Debug = UnityEngine.Debug;
+#endif
 using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace AssetInventory
@@ -36,6 +38,7 @@ namespace AssetInventory
         private float _nextAssetSearchTime;
         private Rect _versionButtonRect;
         private Rect _sampleButtonRect;
+        private Rect _metadataButtonRect;
         private bool _mouseOverPackageTreeRect;
 
         private Vector2 _packageScrollPos;
@@ -64,20 +67,20 @@ namespace AssetInventory
             {
                 if (_assetTreeViewState == null) _assetTreeViewState = new TreeViewState();
 
-                MultiColumnHeaderState headerState = CreateDefaultMultiColumnHeaderState(AssetTreeRect.width);
-                if (AI.Config.visiblePackageTreeColumns != null && AI.Config.visiblePackageTreeColumns.Length > 0)
-                {
-                    headerState.visibleColumns = AI.Config.visiblePackageTreeColumns;
-                }
-                else
-                {
-                    headerState.visibleColumns = new[] {(int)Columns.Name, (int)Columns.Tags, (int)Columns.Version, (int)Columns.Indexed};
-                }
-                if (MultiColumnHeaderState.CanOverwriteSerializedFields(assetMchState, headerState)) MultiColumnHeaderState.OverwriteSerializedFields(assetMchState, headerState);
-                assetMchState = headerState;
-
                 if (_assetTreeView == null)
                 {
+                    MultiColumnHeaderState headerState = CreateDefaultMultiColumnHeaderState(AssetTreeRect.width);
+                    if (MultiColumnHeaderState.CanOverwriteSerializedFields(assetMchState, headerState)) MultiColumnHeaderState.OverwriteSerializedFields(assetMchState, headerState);
+                    if (AI.Config.visiblePackageTreeColumns != null && AI.Config.visiblePackageTreeColumns.Length > 0)
+                    {
+                        headerState.visibleColumns = AI.Config.visiblePackageTreeColumns;
+                    }
+                    else
+                    {
+                        headerState.visibleColumns = new[] {(int)Columns.Name, (int)Columns.Tags, (int)Columns.Version, (int)Columns.Indexed};
+                    }
+                    assetMchState = headerState;
+
                     MultiColumnHeader mch = new MultiColumnHeader(headerState);
                     mch.canSort = true;
                     mch.height = MultiColumnHeader.DefaultGUI.minimumHeight;
@@ -132,6 +135,8 @@ namespace AssetInventory
         private float _assetTreeSelectionStoreCosts;
         private readonly Dictionary<string, Tuple<int, Color>> _assetBulkTags = new Dictionary<string, Tuple<int, Color>>();
         private int _packageDetailsTab;
+        private bool _metadataEditMode;
+        private int _packageInspectorTab;
 
         private void OnPackageListUpdated()
         {
@@ -165,6 +170,7 @@ namespace AssetInventory
             {
                 _requireLookupUpdate = ChangeImpact.Write;
                 _requireAssetTreeRebuild = true;
+                if (AI.Config.onlyInProject) CalculateAssetUsage();
             }
         }
 
@@ -176,7 +182,7 @@ namespace AssetInventory
             _requireAssetTreeRebuild = true;
         }
 
-        private void OnIndexingDone()
+        private void OnActionsDone()
         {
             ReloadLookups();
             _requireAssetTreeRebuild = true;
@@ -184,7 +190,7 @@ namespace AssetInventory
 
         private void DrawPackageDownload(AssetInfo info, bool updateMode = false)
         {
-            if (!string.IsNullOrEmpty(info.OriginalLocation))
+            if (!string.IsNullOrEmpty(info.OriginalLocation) && !string.IsNullOrEmpty(info.OriginalLocationKey))
             {
                 if (!updateMode)
                 {
@@ -276,7 +282,7 @@ namespace AssetInventory
                     else
                     {
                         EditorGUILayout.HelpBox("This package is new and metadata has not been collected yet. Update the index to have all metadata up to date.", MessageType.Warning);
-                        if (GUILayout.Button(UIStyles.Content("Load Metadata"))) FetchAssetDetails(true, info.AssetId);
+                        if (GUILayout.Button(UIStyles.Content("Load Metadata"))) AI.Actions.FetchAssetDetails(true, info.AssetId);
                     }
                 }
                 else if (info.AssetSource == Asset.Source.CustomPackage)
@@ -286,7 +292,7 @@ namespace AssetInventory
             }
         }
 
-        private void DrawPackageDetails(AssetInfo info, bool showMaintenance = false, bool showActions = true, bool startNewSection = true)
+        private void DrawPackageInfo(AssetInfo info, bool showMaintenance = false, bool showActions = true, bool startNewSection = true)
         {
             if (info.AssetId == 0)
             {
@@ -295,16 +301,178 @@ namespace AssetInventory
             }
 
             bool showExpanded = AI.Config.expandPackageDetails && AI.Config.tab == 1;
-            int labelWidth = 95;
+            List<string> sections = new List<string>();
+            if (showExpanded)
+            {
+                List<Dependency> pDeps = info.GetPackageDependencies();
+                List<AssetInfo> pInvDeps = info.GetPackageUsageDependencies(_assets);
+                if (info.Media != null && info.Media.Count > 0) sections.Add("Media");
+                if (!string.IsNullOrWhiteSpace(info.Description)) sections.Add("Description");
+                if (!string.IsNullOrWhiteSpace(info.ReleaseNotes)) sections.Add("Release Notes");
+                if (info.AssetSource == Asset.Source.RegistryPackage || pDeps != null || pInvDeps != null) sections.Add("Dependencies");
+            }
+
             if (startNewSection)
             {
-                GUILayout.BeginVertical("Package Details", "window", GUILayout.Width(GetInspectorWidth()), GUILayout.ExpandWidth(false));
-                EditorGUILayout.Space();
+                GUILayout.BeginVertical(GUILayout.Width(GetInspectorWidth()), GUILayout.ExpandWidth(false));
             }
-            else
+
+            List<string> order = AI.Config.GetSection("package").sections;
+            for (int i = 0; i < order.Count; i++)
             {
-                EditorGUILayout.LabelField("Package", EditorStyles.largeLabel);
+                string section = order[i];
+                switch (section.ToLowerInvariant())
+                {
+                    case "packagedata":
+                        UISection("package", section, () =>
+                        {
+                            DrawPackageData(info, showMaintenance, showActions);
+                        });
+                        break;
+
+                    case "tabbeddetails":
+                        if (showExpanded && AI.Config.projectDetailTabsMode == 0)
+                        {
+                            UISection("package", section, () =>
+                            {
+                                DrawTabbedPackageDetails(info, sections);
+                            });
+                        }
+                        break;
+
+                    case "media":
+                        if (showExpanded && AI.Config.projectDetailTabsMode == 1)
+                        {
+                            if (sections.Contains("Media"))
+                            {
+                                UISection("package", section, () =>
+                                {
+                                    UIBlock("package.media", () =>
+                                    {
+                                        EditorGUILayout.LabelField("Media", EditorStyles.boldLabel);
+                                        ShowMediaDetails(info);
+                                        EditorGUILayout.Space();
+                                    });
+                                });
+                            }
+                        }
+                        break;
+
+                    case "description":
+                        if (showExpanded && AI.Config.projectDetailTabsMode == 1)
+                        {
+                            if (sections.Contains("Description"))
+                            {
+                                UISection("package", section, () =>
+                                {
+                                    UIBlock("package.description", () =>
+                                    {
+                                        EditorGUILayout.LabelField("Description", EditorStyles.boldLabel);
+                                        ShowDescriptionDetails(info);
+                                        EditorGUILayout.Space();
+                                    });
+                                });
+                            }
+                        }
+                        break;
+
+                    case "releasenotes":
+                        if (showExpanded && AI.Config.projectDetailTabsMode == 1)
+                        {
+                            if (sections.Contains("Release Notes"))
+                            {
+                                UISection("package", section, () =>
+                                {
+                                    UIBlock("package.releasenotes", () =>
+                                    {
+                                        EditorGUILayout.LabelField("Release Notes", EditorStyles.boldLabel);
+                                        ShowReleaseNotesDetails(info);
+                                        EditorGUILayout.Space();
+                                    });
+                                });
+                            }
+                        }
+                        break;
+
+                    case "dependencies":
+                        if (showExpanded && AI.Config.projectDetailTabsMode == 1)
+                        {
+                            if (sections.Contains("Dependencies"))
+                            {
+                                UISection("package", section, () =>
+                                {
+                                    UIBlock("package.dependencies", () =>
+                                    {
+                                        EditorGUILayout.LabelField("Dependencies", EditorStyles.boldLabel);
+                                        ShowDependencyDetails(info);
+                                        EditorGUILayout.Space();
+                                    });
+                                });
+                            }
+                        }
+                        break;
+
+                }
+                EditorGUILayout.Space(10);
             }
+
+            if (!showExpanded)
+            {
+                // highly condensed view
+                if (info.PreviewTexture != null)
+                {
+                    UIBlock("package.icon", () =>
+                    {
+                        EditorGUILayout.Space();
+                        GUILayout.FlexibleSpace();
+                        DrawPackagePreview(info);
+                        GUILayout.FlexibleSpace();
+                    });
+                }
+                else if (info.AssetSource == Asset.Source.RegistryPackage && !string.IsNullOrWhiteSpace(info.Description))
+                {
+                    UIBlock("package.description", () =>
+                    {
+                        EditorGUILayout.Space();
+                        EditorGUILayout.LabelField(info.Description, EditorStyles.wordWrappedLabel);
+                    });
+                }
+            }
+
+            if (startNewSection) GUILayout.EndVertical();
+        }
+
+        private void DrawTabbedPackageDetails(AssetInfo info, List<string> sections)
+        {
+            _packageDetailsTab = GUILayout.Toolbar(_packageDetailsTab, sections.ToArray(), GUILayout.Height(32), GUILayout.MinWidth(500));
+            if (_packageDetailsTab > sections.Count - 1) _packageDetailsTab = sections.Count - 1;
+            switch (sections[_packageDetailsTab])
+            {
+                case "Description":
+                    ShowDescriptionDetails(info);
+                    break;
+
+                case "Release Notes":
+                    ShowReleaseNotesDetails(info);
+                    break;
+
+                case "Media":
+                    ShowMediaDetails(info);
+                    break;
+
+                case "Dependencies":
+                    ShowDependencyDetails(info);
+                    break;
+
+            }
+        }
+
+        private void DrawPackageData(AssetInfo info, bool showMaintenance, bool showActions)
+        {
+            bool showExpanded = AI.Config.expandPackageDetails && AI.Config.tab == 1;
+            int labelWidth = 95;
+
+            EditorGUILayout.LabelField("Package", EditorStyles.largeLabel);
             GUILayout.BeginHorizontal();
             GUILayout.BeginVertical();
             if (info.AssetSource == Asset.Source.AssetManager)
@@ -313,7 +481,10 @@ namespace AssetInventory
                 {
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField("Organization", EditorStyles.boldLabel, GUILayout.Width(labelWidth - 2));
-                    if (GUILayout.Button(UIStyles.Content(info.OriginalLocation), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true))) Application.OpenURL(info.GetAMOrganizationUrl());
+                    if (GUILayout.Button(UIStyles.Content(info.OriginalLocation), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true)))
+                    {
+                        Application.OpenURL(info.GetAMOrganizationUrl());
+                    }
                     GUILayout.EndHorizontal();
                 });
 
@@ -321,7 +492,10 @@ namespace AssetInventory
                 {
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField("Project", EditorStyles.boldLabel, GUILayout.Width(labelWidth - 2));
-                    if (GUILayout.Button(UIStyles.Content(info.ToAsset().GetRootAsset().DisplayName), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true))) Application.OpenURL(info.GetAMProjectUrl());
+                    if (GUILayout.Button(UIStyles.Content(info.ToAsset().GetRootAsset().DisplayName), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true)))
+                    {
+                        Application.OpenURL(info.GetAMProjectUrl());
+                    }
                     GUILayout.EndHorizontal();
                 });
 
@@ -331,7 +505,10 @@ namespace AssetInventory
                     {
                         GUILayout.BeginHorizontal();
                         EditorGUILayout.LabelField("Collection", EditorStyles.boldLabel, GUILayout.Width(labelWidth - 2));
-                        if (GUILayout.Button(UIStyles.Content(info.GetDisplayName()), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true))) Application.OpenURL(info.GetAMCollectionUrl());
+                        if (GUILayout.Button(UIStyles.Content(info.GetDisplayName()), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true)))
+                        {
+                            Application.OpenURL(info.GetAMCollectionUrl());
+                        }
                         GUILayout.EndHorizontal();
                     });
                 }
@@ -402,7 +579,10 @@ namespace AssetInventory
                     {
                         GUILayout.BeginHorizontal();
                         EditorGUILayout.LabelField("License", EditorStyles.boldLabel, GUILayout.Width(labelWidth - 2));
-                        if (GUILayout.Button(UIStyles.Content(info.License), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true))) Application.OpenURL(info.LicenseLocation);
+                        if (GUILayout.Button(UIStyles.Content(info.License), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true)))
+                        {
+                            Application.OpenURL(info.LicenseLocation);
+                        }
                         GUILayout.EndHorizontal();
                     }
                     else
@@ -420,7 +600,10 @@ namespace AssetInventory
                     {
                         GUILayout.BeginHorizontal();
                         EditorGUILayout.LabelField("Publisher", EditorStyles.boldLabel, GUILayout.Width(labelWidth - 2));
-                        if (GUILayout.Button(UIStyles.Content(info.GetDisplayPublisher()), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true))) Application.OpenURL(info.GetPublisherLink());
+                        if (GUILayout.Button(UIStyles.Content(info.GetDisplayPublisher()), UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true)))
+                        {
+                            AI.OpenStoreURL(info.GetPublisherLink());
+                        }
                         GUILayout.EndHorizontal();
                     }
                     else
@@ -468,40 +651,34 @@ namespace AssetInventory
                 string price = info.GetPrice() > 0 ? info.GetPriceText() : "Free";
                 GUILabelWithText("Price", price);
             });
-            if (!string.IsNullOrWhiteSpace(info.AssetRating))
+            if (info.AssetRating > 0)
             {
                 UIBlock("package.rating", () =>
                 {
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField(UIStyles.Content("Rating", $"Rating given by Asset Store users ({info.AssetRating}, Hot value {info.Hotness})"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    if (int.TryParse(info.AssetRating, out int rating))
+                    int rating = Mathf.RoundToInt(info.AssetRating);
+                    if (rating <= 0)
                     {
-                        if (rating <= 0)
-                        {
-                            EditorGUILayout.LabelField("Not enough ratings", GUILayout.MaxWidth(113));
-                        }
-                        else
-                        {
-                            Color oldCC = GUI.contentColor;
-                            float size = EditorGUIUtility.singleLineHeight;
-#if UNITY_2021_1_OR_NEWER
-                            // favicon is not gold anymore                    
-                            GUI.contentColor = new Color(0.992f, 0.694f, 0.004f);
-#endif
-                            for (int i = 0; i < rating; i++)
-                            {
-                                GUILayout.Button(EditorGUIUtility.IconContent("Favorite Icon"), EditorStyles.label, GUILayout.Width(size), GUILayout.Height(size));
-                            }
-                            GUI.contentColor = oldCC;
-                            for (int i = rating; i < 5; i++)
-                            {
-                                GUILayout.Button(EditorGUIUtility.IconContent("Favorite"), EditorStyles.label, GUILayout.Width(size), GUILayout.Height(size));
-                            }
-                        }
+                        EditorGUILayout.LabelField("Not enough ratings", GUILayout.MaxWidth(113));
                     }
                     else
                     {
-                        EditorGUILayout.LabelField($"{info.AssetRating} ");
+                        Color oldCC = GUI.contentColor;
+                        float size = EditorGUIUtility.singleLineHeight;
+#if UNITY_2021_1_OR_NEWER
+                        // favicon is not gold anymore                    
+                        GUI.contentColor = EditorGUIUtility.isProSkin ? new Color(0.992f, 0.694f, 0.004f) : Color.black;
+#endif
+                        for (int i = 0; i < rating; i++)
+                        {
+                            GUILayout.Button(EditorGUIUtility.IconContent("Favorite Icon"), EditorStyles.label, GUILayout.Width(size), GUILayout.Height(size));
+                        }
+                        GUI.contentColor = oldCC;
+                        for (int i = rating; i < 5; i++)
+                        {
+                            GUILayout.Button(EditorGUIUtility.IconContent("Favorite"), EditorStyles.label, GUILayout.Width(size), GUILayout.Height(size));
+                        }
                     }
                     EditorGUILayout.LabelField($"({info.RatingCount} ratings)", GUILayout.MaxWidth(81));
                     GUILayout.EndHorizontal();
@@ -511,6 +688,7 @@ namespace AssetInventory
             {
                 UIBlock("package.indexedfiles", () => GUILabelWithText("Indexed Files", $"{info.FileCount:N0}"), info.AssetSource == Asset.Source.Directory || info.AssetSource == Asset.Source.AssetManager || info.AssetSource == Asset.Source.Archive);
             }
+
             if (info.ChildInfos.Count > 0)
             {
                 UIBlock("package.childcount", () => GUILabelWithText(info.AssetSource == Asset.Source.AssetManager ? "Collections" : "Sub-Packages", $"{info.ChildInfos.Count:N0}" + (info.CurrentState == Asset.State.SubInProcess ? " (reindexing pending)" : "")));
@@ -526,7 +704,10 @@ namespace AssetInventory
                     case Asset.Source.AssetStorePackage:
                         if (info.ForeignId > 0)
                         {
-                            if (GUILayout.Button(UIStyles.Content("Asset Store"), EditorStyles.linkLabel)) Application.OpenURL(info.GetItemLink());
+                            if (GUILayout.Button(UIStyles.Content("Asset Store"), EditorStyles.linkLabel))
+                            {
+                                AI.OpenStoreURL(info.GetItemLink());
+                            }
                         }
                         else
                         {
@@ -537,7 +718,10 @@ namespace AssetInventory
                     case Asset.Source.RegistryPackage:
                         if (info.ForeignId > 0)
                         {
-                            if (GUILayout.Button(UIStyles.Content("Asset Store"), EditorStyles.linkLabel)) Application.OpenURL(info.GetItemLink());
+                            if (GUILayout.Button(UIStyles.Content("Asset Store"), EditorStyles.linkLabel))
+                            {
+                                AI.OpenStoreURL(info.GetItemLink());
+                            }
                         }
                         else if (info.IsFeaturePackage())
                         {
@@ -561,14 +745,17 @@ namespace AssetInventory
                 {
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField("Asset Link", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    if (GUILayout.Button(UIStyles.Content("Asset Store"), EditorStyles.linkLabel)) Application.OpenURL(info.GetItemLink());
+                    if (GUILayout.Button(UIStyles.Content("Asset Store"), EditorStyles.linkLabel))
+                    {
+                        AI.OpenStoreURL(info.GetItemLink());
+                    }
                     GUILayout.EndHorizontal();
                 });
             }
 
             if (showMaintenance)
             {
-                if (AI.Config.createBackups && info.AssetSource != Asset.Source.RegistryPackage && info.ParentId == 0)
+                if (AI.Actions.CreateBackups && info.AssetSource != Asset.Source.RegistryPackage && info.ParentId == 0)
                 {
                     UIBlock("package.backup", () =>
                     {
@@ -582,7 +769,7 @@ namespace AssetInventory
                 }
             }
 
-            if (AI.Config.createAICaptions)
+            if (AI.Actions.CreateAICaptions)
             {
                 UIBlock("package.aiusage", () =>
                 {
@@ -600,7 +787,7 @@ namespace AssetInventory
                 UIBlock("package.extract", () =>
                 {
                     GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Extract", "Will keep the package extracted in the cache to minimize access delays at the cost of more hard disk space."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    EditorGUILayout.LabelField(UIStyles.Content("Keep Cached", "Will keep the package extracted in the cache to minimize access delays at the cost of more hard disk space."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     EditorGUI.BeginChangeCheck();
                     info.KeepExtracted = EditorGUILayout.Toggle(info.KeepExtracted);
                     if (EditorGUI.EndChangeCheck()) AI.SetAssetExtraction(info, info.KeepExtracted);
@@ -623,6 +810,29 @@ namespace AssetInventory
                 }
                 GUILayout.EndHorizontal();
             });
+
+            DrawMetadata(info, info.PackageMetadata, labelWidth);
+
+            UIBlock("package.metadata", () =>
+            {
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button(UIStyles.Content("Add Metadata...")))
+                {
+                    MetadataSelectionUI metaUI = new MetadataSelectionUI();
+                    metaUI.Init(MetadataAssignment.Target.Package, () => _metadataEditMode = true);
+                    metaUI.SetAssets(new List<AssetInfo> {info});
+                    PopupWindow.Show(_metadataButtonRect, metaUI);
+                }
+                if (Event.current.type == EventType.Repaint) _metadataButtonRect = GUILayoutUtility.GetLastRect();
+                if (info.PackageMetadata.Count > 0)
+                {
+                    if (GUILayout.Button(UIStyles.Content(_metadataEditMode ? "Save Metadata" : "Edit Metadata")))
+                    {
+                        _metadataEditMode = !_metadataEditMode;
+                    }
+                }
+                GUILayout.EndHorizontal();
+            }, _metadataEditMode);
             GUILayout.EndVertical();
             if (showExpanded && info.PreviewTexture != null)
             {
@@ -640,6 +850,20 @@ namespace AssetInventory
 
             EditorGUILayout.Space();
             if (info.SafeName == Asset.NONE) UIBlock("package.hints.noname", () => EditorGUILayout.HelpBox("This is an automatically created package for managing indexed media files that are not associated with any other package.", MessageType.Info));
+            if (AI.Config.tab == 0)
+            {
+                if (info.IsUnityPackage() || info.IsArchive())
+                {
+                    AssetInfo child = info.ChildInfos.FirstOrDefault(a => a.Location == info.Location + "|" + info.Path);
+                    if (child != null)
+                    {
+                        UIBlock("package.actions.opensubpackage", () =>
+                        {
+                            if (GUILayout.Button("Jump into Sub-Package")) OpenInSearch(child, true, false);
+                        });
+                    }
+                }
+            }
             if (info.ParentInfo != null)
             {
                 UIBlock("package.hints.subpackage", () => EditorGUILayout.HelpBox($"This is a sub-package inside '{info.ParentInfo.GetDisplayName()}'.", MessageType.Info));
@@ -647,7 +871,7 @@ namespace AssetInventory
                 {
                     UIBlock("package.actions.showparent", () =>
                     {
-                        if (GUILayout.Button("Show Parent Package")) OpenInSearch(info.ParentInfo, true);
+                        if (GUILayout.Button("Show Parent Package")) OpenInSearch(info.ParentInfo, true, false);
                     });
                 }
             }
@@ -661,7 +885,7 @@ namespace AssetInventory
 #endif
             if (showActions)
             {
-                EditorGUI.BeginDisabledGroup(AI.CurrentMain != null || AI.IndexingInProgress);
+                EditorGUI.BeginDisabledGroup(AI.Actions.ActionsInProgress);
 
                 bool showDelete = false;
                 if (info.CurrentSubState == Asset.SubState.Outdated)
@@ -745,8 +969,21 @@ namespace AssetInventory
                             {
                                 if (GUILayout.Button(UIStyles.Content("Uninstall Package", "Remove package from current project.")))
                                 {
-                                    Client.Remove(info.SafeName);
-                                    AssetStore.GatherProjectMetadata();
+                                    PackageInfo pInfo = AssetStore.GetPackageInfo(info);
+                                    if (pInfo != null)
+                                    {
+                                        if (pInfo.source == PackageSource.Embedded)
+                                        {
+                                            // embedded packages need to be deleted manually
+                                            FileUtil.DeleteFileOrDirectory(pInfo.resolvedPath);
+                                            AssetDatabase.Refresh();
+                                        }
+                                        else
+                                        {
+                                            Client.Remove(pInfo.name);
+                                        }
+                                        AssetStore.GatherProjectMetadata();
+                                    }
                                 }
                                 EditorGUILayout.Space();
                             });
@@ -915,7 +1152,7 @@ namespace AssetInventory
                                 if (GUILayout.Button(UIStyles.Content($"{reindexCaption} Package Now", "Will instantly delete the existing index and reindex the full package.")))
                                 {
                                     AI.ForgetPackage(info, true);
-                                    AI.RefreshIndex(info);
+                                    AI.Actions.Reindex(info);
                                     _requireLookupUpdate = ChangeImpact.Write;
                                     _requireSearchUpdate = true;
                                     _requireAssetTreeRebuild = true;
@@ -926,7 +1163,10 @@ namespace AssetInventory
                         {
                             UIBlock("package.actions.refreshmetadata", () =>
                             {
-                                if (GUILayout.Button(UIStyles.Content("Refresh Metadata", "Will fetch most up-to-date metadata from the Asset Store."))) FetchAssetDetails(true, info.AssetId);
+                                if (GUILayout.Button(UIStyles.Content("Refresh Metadata", "Will fetch most up-to-date metadata from the Asset Store.")))
+                                {
+                                    AI.Actions.FetchAssetDetails(true, info.AssetId);
+                                }
                             });
                         }
                     }
@@ -992,7 +1232,7 @@ namespace AssetInventory
                             if (GUILayout.Button("Export Package..."))
                             {
                                 ExportUI exportUI = ExportUI.ShowWindow();
-                                exportUI.Init(_selectedTreeAssets, 1);
+                                exportUI.Init(_selectedTreeAssets, 0, assetMchState.visibleColumns);
                             }
                             EditorGUILayout.Space();
                         });
@@ -1087,7 +1327,7 @@ namespace AssetInventory
                             x = CalcTagSize(x, tagInfo.Name);
                             UIStyles.DrawTag(tagInfo, () =>
                             {
-                                Tagging.RemoveTagAssignment(info, tagInfo);
+                                Tagging.RemoveAssignment(info, tagInfo);
                                 _requireAssetTreeRebuild = true;
                             });
                         }
@@ -1095,109 +1335,121 @@ namespace AssetInventory
                     GUILayout.EndHorizontal();
                 });
             }
-            if (showExpanded)
+        }
+
+        private void DrawMetadata(AssetInfo info, List<MetadataInfo> metadata, int labelWidth)
+        {
+            foreach (MetadataInfo metaInfo in metadata)
             {
-                List<string> sections = new List<string>();
-                List<Dependency> pDeps = info.GetPackageDependencies();
-                List<AssetInfo> pInvDeps = info.GetPackageUsageDependencies(_assets);
-                if (info.Media != null && info.Media.Count > 0) sections.Add("Images");
-                if (!string.IsNullOrWhiteSpace(info.Description)) sections.Add("Description");
-                if (!string.IsNullOrWhiteSpace(info.ReleaseNotes)) sections.Add("Release Notes");
-                if (info.AssetSource == Asset.Source.RegistryPackage || pDeps != null || pInvDeps != null) sections.Add("Dependencies");
+                if (metaInfo.RestrictAssetSource && info.AssetSource != metaInfo.ApplicableSource) continue;
 
-                if (sections.Count > 0)
+                UIBlock($"package.metadata.{metaInfo.Id}", () =>
                 {
-                    EditorGUILayout.Space(20);
-                    if (AI.Config.projectDetailTabsMode == 0)
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(metaInfo.Name, EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+
+                    EditorGUI.BeginChangeCheck();
+                    if (_metadataEditMode)
                     {
-                        _packageDetailsTab = GUILayout.Toolbar(_packageDetailsTab, sections.ToArray(), GUILayout.Height(32), GUILayout.MinWidth(500));
-                        if (_packageDetailsTab > sections.Count - 1) _packageDetailsTab = sections.Count - 1;
-                        switch (sections[_packageDetailsTab])
+                        switch (metaInfo.Type)
                         {
-                            case "Description":
-                                ShowDescriptionDetails(info);
+                            case MetadataDefinition.DataType.Boolean:
+                                metaInfo.BoolValue = EditorGUILayout.Toggle(metaInfo.BoolValue);
                                 break;
 
-                            case "Release Notes":
-                                ShowReleaseNotesDetails(info);
+                            case MetadataDefinition.DataType.Text:
+                            case MetadataDefinition.DataType.Url:
+                                metaInfo.StringValue = EditorGUILayout.DelayedTextField(metaInfo.StringValue);
                                 break;
 
-                            case "Images":
-                                ShowMediaDetails(info);
+                            case MetadataDefinition.DataType.Date:
+                            case MetadataDefinition.DataType.DateTime:
+                                if (DateTime.TryParse(EditorGUILayout.DelayedTextField(metaInfo.DateTimeValue.ToString("o")), out DateTime dateTime))
+                                {
+                                    metaInfo.DateTimeValue = dateTime;
+                                }
                                 break;
 
-                            case "Dependencies":
-                                ShowDependencyDetails(info);
+                            case MetadataDefinition.DataType.BigText:
+                                metaInfo.StringValue = EditorGUILayout.TextArea(metaInfo.StringValue, GUILayout.MinWidth(100));
                                 break;
 
+                            case MetadataDefinition.DataType.Number:
+                                metaInfo.IntValue = EditorGUILayout.DelayedIntField(metaInfo.IntValue);
+                                break;
+
+                            case MetadataDefinition.DataType.DecimalNumber:
+                                metaInfo.FloatValue = EditorGUILayout.DelayedFloatField(metaInfo.FloatValue);
+                                break;
+
+                            case MetadataDefinition.DataType.SingleSelect:
+                                if (string.IsNullOrEmpty(metaInfo.ValueList))
+                                {
+                                    EditorGUILayout.LabelField("-No values specified yet-", EditorStyles.wordWrappedLabel);
+                                }
+                                else
+                                {
+                                    List<string> rawValues = new List<string>
+                                    {
+                                        "-none-",
+                                        string.Empty
+                                    };
+                                    rawValues.AddRange(metaInfo.ValueList.Split(',').Select(s => s.Trim()));
+                                    string[] values = rawValues.ToArray();
+                                    int oldIdx = Mathf.Max(0, Array.IndexOf(values, metaInfo.StringValue));
+                                    int newIdx = EditorGUILayout.Popup(oldIdx, values);
+                                    metaInfo.StringValue = newIdx <= 1 ? null : values[newIdx];
+                                }
+                                break;
+
+                        }
+                        GUILayout.FlexibleSpace();
+                        if (GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash", "|Remove metadata"), GUILayout.Width(30)))
+                        {
+                            Metadata.RemoveAssignment(info, metaInfo);
                         }
                     }
                     else
                     {
-                        if (sections.Contains("Images"))
+                        switch (metaInfo.Type)
                         {
-                            UIBlock("package.media", () =>
-                            {
-                                EditorGUILayout.LabelField("Media", EditorStyles.boldLabel);
-                                ShowMediaDetails(info);
-                                EditorGUILayout.Space();
-                            });
-                        }
-                        if (sections.Contains("Release Notes"))
-                        {
-                            UIBlock("package.releasenotes", () =>
-                            {
-                                EditorGUILayout.LabelField("Release Notes", EditorStyles.boldLabel);
-                                ShowReleaseNotesDetails(info);
-                                EditorGUILayout.Space();
-                            });
-                        }
-                        if (sections.Contains("Description"))
-                        {
-                            UIBlock("package.description", () =>
-                            {
-                                EditorGUILayout.LabelField("Description", EditorStyles.boldLabel);
-                                ShowDescriptionDetails(info);
-                                EditorGUILayout.Space();
-                            });
-                        }
-                        if (sections.Contains("Dependencies"))
-                        {
-                            UIBlock("package.dependencies", () =>
-                            {
-                                EditorGUILayout.LabelField("Dependencies", EditorStyles.boldLabel);
-                                ShowDependencyDetails(info);
-                                EditorGUILayout.Space();
-                            });
+                            case MetadataDefinition.DataType.Boolean:
+                                metaInfo.BoolValue = EditorGUILayout.Toggle(metaInfo.BoolValue);
+                                break;
+
+                            case MetadataDefinition.DataType.Text:
+                            case MetadataDefinition.DataType.BigText:
+                            case MetadataDefinition.DataType.SingleSelect:
+                                EditorGUILayout.LabelField(metaInfo.StringValue, EditorStyles.wordWrappedLabel, UIStyles.GetLabelMaxWidth());
+                                break;
+
+                            case MetadataDefinition.DataType.Number:
+                                EditorGUILayout.LabelField(metaInfo.IntValue.ToString(), UIStyles.GetLabelMaxWidth());
+                                break;
+
+                            case MetadataDefinition.DataType.DecimalNumber:
+                                EditorGUILayout.LabelField($"{metaInfo.FloatValue:N1}", UIStyles.GetLabelMaxWidth());
+                                break;
+
+                            case MetadataDefinition.DataType.Url:
+                                if (GUILayout.Button(metaInfo.StringValue?.Replace("https://", "").Replace("www.", ""), EditorStyles.linkLabel))
+                                {
+                                    Application.OpenURL(metaInfo.StringValue);
+                                }
+                                break;
+
+                            case MetadataDefinition.DataType.Date:
+                                EditorGUILayout.LabelField(metaInfo.DateTimeValue.ToShortDateString(), UIStyles.GetLabelMaxWidth());
+                                break;
                         }
                     }
-                }
-            }
-            else
-            {
-                // highly condensed view
-                if (info.PreviewTexture != null)
-                {
-                    UIBlock("package.icon", () =>
+                    if (EditorGUI.EndChangeCheck())
                     {
-                        EditorGUILayout.Space();
-                        GUILayout.FlexibleSpace();
-                        DrawPackagePreview(info);
-                        GUILayout.FlexibleSpace();
-                    });
-                }
-                else if (info.AssetSource == Asset.Source.RegistryPackage && !string.IsNullOrWhiteSpace(info.Description))
-                {
-                    UIBlock("package.description", () =>
-                    {
-                        EditorGUILayout.Space();
-                        EditorGUILayout.LabelField(info.Description, EditorStyles.wordWrappedLabel);
-                    });
-                }
+                        DBAdapter.DB.Update(metaInfo.ToAssignment());
+                    }
+                    GUILayout.EndHorizontal();
+                });
             }
-
-            if (AI.Config.tab == 1) RenderExpandButton();
-            if (startNewSection) GUILayout.EndVertical();
         }
 
         private static void InstallPackage(AssetInfo info, string version)
@@ -1336,7 +1588,6 @@ namespace AssetInventory
 
         private void ShowMediaDetails(AssetInfo info)
         {
-            EditorGUILayout.Space();
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
             if (_selectedMedia < 0 || _selectedMedia >= info.Media.Count) _selectedMedia = 0;
@@ -1415,7 +1666,7 @@ namespace AssetInventory
         private async void ConnectToAssetStore(AssetInfo info, AssetDetails details)
         {
             AI.ConnectToAssetStore(info, details);
-            await AI.FetchAssetsDetails();
+            await new AssetStoreImporter().FetchAssetsDetails(false, info.AssetId);
             _requireLookupUpdate = ChangeImpact.Write;
             _requireAssetTreeRebuild = true;
         }
@@ -1433,7 +1684,7 @@ namespace AssetInventory
             return x;
         }
 
-        private void DrawAddPackageTag(List<AssetInfo> info)
+        private void DrawAddPackageTag(List<AssetInfo> infos)
         {
             EditorGUILayout.Space();
             GUILayout.BeginHorizontal();
@@ -1441,7 +1692,7 @@ namespace AssetInventory
             {
                 TagSelectionUI tagUI = new TagSelectionUI();
                 tagUI.Init(TagAssignment.Target.Package);
-                tagUI.SetAssets(info);
+                tagUI.SetAssets(infos);
                 PopupWindow.Show(_tagButtonRect, tagUI);
             }
             if (Event.current.type == EventType.Repaint) _tagButtonRect = GUILayoutUtility.GetLastRect();
@@ -1457,11 +1708,6 @@ namespace AssetInventory
             }
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(EditorGUIUtility.IconContent("Preset.Context", "|Search Filters")))
-            {
-                AI.Config.showPackageFilterBar = !AI.Config.showPackageFilterBar;
-                AI.SaveConfig();
-            }
             EditorGUILayout.LabelField("Search:", GUILayout.Width(50));
             EditorGUI.BeginChangeCheck();
             UIBlock2("package.actions.nameonly", () =>
@@ -1483,6 +1729,20 @@ namespace AssetInventory
                 _nextAssetSearchTime = 0;
                 _requireAssetTreeRebuild = true;
             }
+            /*
+            UIBlock2("package.actions.add", () =>
+            {
+                if (GUILayout.Button(UIStyles.Content("+", "Add or Install Packages"), GUILayout.Width(20)))
+                {
+                    GenericMenu menu = new GenericMenu();
+                    menu.AddItem(new GUIContent("Add Git Package..."), false, () => CreatePackage(Asset.Source.RegistryPackage, PackageSource.Git));
+                    menu.AddItem(new GUIContent("Add Asset Store Package to Watch..."), false, () => CreatePackage(Asset.Source.AssetStorePackage));
+                    menu.AddSeparator("");
+                    menu.AddItem(new GUIContent("Install Package by Name..."), false, () => { });
+                    menu.ShowAsContext();
+                }
+            });
+            */
 
             EditorGUI.BeginChangeCheck();
             if (AI.Config.assetGrouping == 0 || AI.Config.packageViewMode == 1)
@@ -1496,6 +1756,7 @@ namespace AssetInventory
                     if (GUILayout.Button(AI.Config.sortAssetsDescending ? UIStyles.Content("˅", "Descending") : UIStyles.Content("˄", "Ascending"), GUILayout.Width(17)))
                     {
                         AI.Config.sortAssetsDescending = !AI.Config.sortAssetsDescending;
+                        AI.SaveConfig();
                     }
                     GUILayout.EndHorizontal();
                 });
@@ -1546,55 +1807,12 @@ namespace AssetInventory
             EditorGUILayout.Space();
             EditorGUILayout.Space();
             GUILayout.BeginHorizontal();
-            if (AI.Config.showPackageFilterBar)
-            {
-                GUILayout.BeginVertical("Filter Bar", "window", GUILayout.Width(UIStyles.INSPECTOR_WIDTH));
-                EditorGUILayout.Space();
-
-                int labelWidth = 85;
-
-                EditorGUI.BeginChangeCheck();
-
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("Packages", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.packagesListing = EditorGUILayout.Popup(AI.Config.packagesListing, _packageListingOptions, GUILayout.ExpandWidth(true));
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("SRPs", EditorStyles.boldLabel, GUILayout.MaxWidth(labelWidth));
-                AI.Config.assetSRPs = EditorGUILayout.Popup(AI.Config.assetSRPs, _srpOptions, GUILayout.ExpandWidth(true));
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("Deprecation", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.assetDeprecation = EditorGUILayout.Popup(AI.Config.assetDeprecation, _deprecationOptions, GUILayout.ExpandWidth(true));
-                GUILayout.EndHorizontal();
-
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Maintenance", "A collection of various special-purpose filters"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                _selectedMaintenance = EditorGUILayout.Popup(_selectedMaintenance, _maintenanceOptions, GUILayout.ExpandWidth(true));
-                GUILayout.EndHorizontal();
-
-                if (EditorGUI.EndChangeCheck())
-                {
-                    AI.SaveConfig();
-                    _requireAssetTreeRebuild = true;
-                }
-
-                EditorGUILayout.Space();
-                if ((AI.Config.packagesListing > 0 || AI.Config.assetDeprecation > 0 || _selectedMaintenance > 0 || AI.Config.assetSRPs > 0) && GUILayout.Button("Reset Filters"))
-                {
-                    ResetPackageFilters();
-                }
-
-                GUILayout.EndVertical();
-            }
 
             // packages
             GUILayout.BeginVertical();
             if (AI.Config.packageViewMode == 0)
             {
-                int left = AI.Config.showPackageFilterBar ? UIStyles.INSPECTOR_WIDTH + 5 : 0;
+                int left = 0;
                 int yStart = (string.IsNullOrEmpty(CloudProjectSettings.accessToken) ? 128 : 80) + (AI.UICustomizationMode ? 30 : 0);
                 float width = position.width - GetInspectorWidth() - left - 5;
                 if (width < 300) width = 300;
@@ -1605,7 +1823,7 @@ namespace AssetInventory
             {
                 _packageScrollPos = GUILayout.BeginScrollView(_packageScrollPos, false, false);
                 EditorGUI.BeginChangeCheck();
-                int inspectorCount = (AI.Config.showPackageFilterBar ? 2 : 1) + (AI.Config.expandPackageDetails ? 1 : 0);
+                int inspectorCount = AI.Config.expandPackageDetails ? 2 : 1;
                 PGrid.Draw(position.width, inspectorCount, AI.Config.packageTileSize, UIStyles.packageTile, UIStyles.selectedPackageTile);
                 if (EditorGUI.EndChangeCheck() || (_allowLogic && _searchDone))
                 {
@@ -1639,7 +1857,7 @@ namespace AssetInventory
 
             EditorGUI.BeginChangeCheck();
             string caption = "In Current Project";
-            if (_usageCalculationInProgress) caption += $" ({AssetProgress.MainProgress / (float)AssetProgress.MainCount:P0})";
+            if (_usageCalculationInProgress) caption += $" ({_usageCalculation.MainProgress / (float)_usageCalculation.MainCount:P0})";
             AI.Config.onlyInProject = EditorGUILayout.ToggleLeft(UIStyles.Content(caption, "Show only packages that are used inside the current project. Will require a full project scan via the reporting tab, done automatically in the background."), AI.Config.onlyInProject, GUILayout.MinWidth(130));
             if (EditorGUI.EndChangeCheck())
             {
@@ -1654,48 +1872,131 @@ namespace AssetInventory
 
             // inspector
             GUILayout.BeginVertical(GUILayout.Width(GetInspectorWidth()));
-            // FIXME: scrolling is broken for some reason, bar will often overlap
-            _assetsScrollPos = GUILayout.BeginScrollView(_assetsScrollPos, false, false, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.ExpandWidth(false));
-            if (!AI.Config.expandPackageDetails || _selectedTreeAsset == null)
+            GUILayout.BeginHorizontal();
+            UIBlock("package.actions.expand", () =>
             {
-                UIBlock("package.overview", () =>
+                if (GUILayout.Button(AI.Config.expandPackageDetails ? ">" : "<", GUILayout.Width(20)))
                 {
-                    GUILayout.BeginVertical("Overview", "window", GUILayout.Width(GetInspectorWidth()), GUILayout.ExpandHeight(false));
-                    EditorGUILayout.Space();
-                    DrawPackageStats(true);
-
-                    GUILayout.EndVertical();
-                    EditorGUILayout.Space();
+                    AI.Config.expandPackageDetails = !AI.Config.expandPackageDetails;
+                    AI.SaveConfig();
+                    LoadMediaOnDemand(_selectedTreeAsset);
+                }
+            });
+            List<string> strings = new List<string>
+            {
+                "Inspector",
+                "Filters" + (IsPackageFilterActive() ? "*" : ""),
+                "Statistics"
+            };
+            _packageInspectorTab = GUILayout.Toolbar(_packageInspectorTab, strings.ToArray());
+            if (_packageInspectorTab == 0 && AI.Config.expandPackageDetails)
+            {
+                UIBlock("package.actions.layout", () =>
+                {
+                    EditorGUI.BeginChangeCheck();
+                    AI.Config.projectDetailTabsMode = GUILayout.Toolbar(AI.Config.projectDetailTabsMode, _packageDetailsViewOptions, GUILayout.Width(50), GUILayout.Height(20));
+                    if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
                 });
             }
+            GUILayout.EndHorizontal();
+            EditorGUILayout.Space();
 
-            if (_selectedTreeAsset != null)
+            GUILayout.BeginVertical(GUILayout.Width(GetInspectorWidth()));
+            _assetsScrollPos = GUILayout.BeginScrollView(_assetsScrollPos, false, false, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.ExpandWidth(false));
+            switch (_packageInspectorTab)
             {
-                DrawPackageDetails(_selectedTreeAsset, true);
-            }
-            else if (_selectedTreeAsset == null && _selectedTreeAssets != null && _selectedTreeAssets.Count > 0)
-            {
-                DrawBulkPackageActions(_selectedTreeAssets, _assetTreeSubPackageCount, _assetBulkTags, _assetTreeSelectionSize, _assetTreeSelectionTotalCosts, _assetTreeSelectionStoreCosts, true);
-            }
-            else
-            {
-                GUILayout.BeginVertical("Package Details", "window", GUILayout.Width(GetInspectorWidth()), GUILayout.ExpandHeight(false));
-                EditorGUILayout.Space();
-                EditorGUILayout.HelpBox("Select one or more packages to see details.", MessageType.Info);
-                RenderExpandButton();
-                GUILayout.EndVertical();
+                case 0:
+                    if (_selectedTreeAsset != null)
+                    {
+                        DrawPackageInfo(_selectedTreeAsset, true);
+                    }
+                    else if (_selectedTreeAsset == null && _selectedTreeAssets != null && _selectedTreeAssets.Count > 0)
+                    {
+                        DrawBulkPackageActions(_selectedTreeAssets, _assetTreeSubPackageCount, _assetBulkTags, _assetTreeSelectionSize, _assetTreeSelectionTotalCosts, _assetTreeSelectionStoreCosts, true);
+                    }
+                    else
+                    {
+                        EditorGUILayout.HelpBox("Select one or more packages to see details.", MessageType.Info);
+                    }
+                    break;
+
+                case 1:
+                    int labelWidth = 85;
+
+                    EditorGUI.BeginChangeCheck();
+
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField("Packages", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.packagesListing = EditorGUILayout.Popup(AI.Config.packagesListing, _packageListingOptions, GUILayout.ExpandWidth(true));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField("SRPs", EditorStyles.boldLabel, GUILayout.MaxWidth(labelWidth));
+                    AI.Config.assetSRPs = EditorGUILayout.Popup(AI.Config.assetSRPs, _srpOptions, GUILayout.ExpandWidth(true));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField("Deprecation", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.assetDeprecation = EditorGUILayout.Popup(AI.Config.assetDeprecation, _deprecationOptions, GUILayout.ExpandWidth(true));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Maintenance", "A collection of various special-purpose filters"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    _selectedMaintenance = EditorGUILayout.Popup(_selectedMaintenance, _maintenanceOptions, GUILayout.ExpandWidth(true));
+                    GUILayout.EndHorizontal();
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        AI.SaveConfig();
+                        _requireAssetTreeRebuild = true;
+                    }
+
+                    EditorGUILayout.Space();
+                    if (IsPackageFilterActive() && GUILayout.Button("Reset Filters"))
+                    {
+                        ResetPackageFilters();
+                    }
+                    break;
+
+                case 2:
+                    DrawPackageStats(false);
+                    break;
             }
             GUILayout.EndScrollView();
-            if (!ShowAdvanced() && AI.Config.showHints) EditorGUILayout.LabelField("Hold down CTRL for additional options.", EditorStyles.centeredGreyMiniLabel);
+            GUILayout.EndVertical();
+
+            if (!ShowAdvanced() && AI.Config.showHints)
+            {
+                GUILayout.FlexibleSpace();
+                EditorGUILayout.LabelField("Hold down CTRL for additional options.", EditorStyles.centeredGreyMiniLabel);
+            }
             GUILayout.EndVertical();
             GUILayout.EndHorizontal();
 
             if (AI.Config.packageViewMode == 1) PGrid.HandleKeyboardCommands();
         }
 
-        private void ResetPackageFilters()
+        private void CreatePackage(Asset.Source source, PackageSource packageSource = PackageSource.Unknown)
         {
-            AI.Config.packagesListing = 0;
+            AssetInfo info = new AssetInfo();
+            info.AssetSource = source;
+            info.PackageSource = packageSource;
+
+            PackageUI packageUI = PackageUI.ShowWindow();
+            packageUI.Init(info, _ =>
+            {
+                AI.TriggerPackageRefresh();
+            });
+        }
+
+        private bool IsPackageFilterActive()
+        {
+            return AI.Config.packagesListing != 1 || AI.Config.assetDeprecation > 0 || _selectedMaintenance > 0 || AI.Config.assetSRPs > 0;
+        }
+
+        private void ResetPackageFilters(bool setType = true)
+        {
+            if (setType) AI.Config.packagesListing = 1;
             AI.Config.assetDeprecation = 0;
             AI.Config.assetSRPs = 0;
             _selectedMaintenance = 0;
@@ -1703,7 +2004,6 @@ namespace AssetInventory
 
             AI.SaveConfig();
         }
-
 
         private void DrawPackageStats(bool allowCollapse)
         {
@@ -1735,38 +2035,12 @@ namespace AssetInventory
             if (_packageFileCount > 0) GUILabelWithText("Indexed Files", $"{_packageFileCount:N0}", labelWidth);
         }
 
-        private void RenderExpandButton()
-        {
-            UIBlock("package.actions.expand", () =>
-            {
-                GUILayout.FlexibleSpace();
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button(EditorGUIUtility.IconContent("d_ScaleTool", "|Expand/Collapse Details Section"), GUILayout.Width(28), GUILayout.Height(28)))
-                {
-                    AI.Config.expandPackageDetails = !AI.Config.expandPackageDetails;
-                    AI.SaveConfig();
-                    LoadMediaOnDemand(_selectedTreeAsset);
-                }
-                GUILayout.FlexibleSpace();
-                if (AI.Config.expandPackageDetails)
-                {
-                    GUILayout.BeginVertical();
-                    GUILayout.Space(10);
-                    EditorGUI.BeginChangeCheck();
-                    AI.Config.projectDetailTabsMode = GUILayout.Toolbar(AI.Config.projectDetailTabsMode, _packageDetailsViewOptions, GUILayout.Width(50), GUILayout.Height(20));
-                    if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
-                    GUILayout.EndVertical();
-                }
-                GUILayout.EndHorizontal();
-            });
-        }
-
         private void DrawBulkPackageActions(List<AssetInfo> bulkAssets, long bulkSubAssetCount, Dictionary<string, Tuple<int, Color>> bulkTags, long size, float totalCosts, float storeCosts, bool useScroll)
         {
             int labelWidth = 130;
 
-            GUILayout.BeginVertical("Bulk Info", "window", GUILayout.Width(GetInspectorWidth()), GUILayout.ExpandHeight(false));
-            EditorGUILayout.Space();
+            GUILayout.BeginVertical(GUILayout.Width(GetInspectorWidth()), GUILayout.ExpandHeight(false));
+            EditorGUILayout.LabelField("Bulk Info", EditorStyles.largeLabel);
             UIBlock("package.bulk.count", () => GUILabelWithText("Selected Items", $"{bulkAssets.Count - bulkSubAssetCount:N0}", labelWidth));
             if (bulkSubAssetCount > 0) UIBlock("package.bulk.childcount", () => GUILabelWithText($"{UIStyles.INDENT}Sub-Packages", $"{bulkSubAssetCount:N0}", labelWidth));
             UIBlock("package.bulk.size", () => GUILabelWithText("Size on Disk", EditorUtility.FormatBytes(size), labelWidth));
@@ -1774,7 +2048,6 @@ namespace AssetInventory
             {
                 UIBlock("package.bulk.price", () =>
                 {
-                    EditorGUILayout.Space();
                     GUILabelWithText("Total Price", bulkAssets[0].GetPriceText(totalCosts), labelWidth);
                 });
             }
@@ -1788,8 +2061,8 @@ namespace AssetInventory
 
             labelWidth = 100;
             EditorGUILayout.Space();
-            GUILayout.BeginVertical("Bulk Actions", "window", GUILayout.Width(GetInspectorWidth()));
-            EditorGUILayout.Space();
+            GUILayout.BeginVertical(GUILayout.Width(GetInspectorWidth()));
+            EditorGUILayout.LabelField("Bulk Actions", EditorStyles.largeLabel);
             if (useScroll) _bulkScrollPos = GUILayout.BeginScrollView(_bulkScrollPos, false, false);
             UpdateObserver updateObserver = AI.GetObserver();
             if (!updateObserver.PrioInitializationDone)
@@ -1798,7 +2071,7 @@ namespace AssetInventory
                 EditorGUILayout.HelpBox($"Gathering data (*): {progress}%", MessageType.Info);
                 EditorGUILayout.Space();
             }
-            if (AI.Config.createBackups)
+            if (AI.Actions.CreateBackups)
             {
                 UIBlock("package.bulk.actions.backup", () =>
                 {
@@ -1806,11 +2079,13 @@ namespace AssetInventory
                     EditorGUILayout.LabelField("Backup", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     if (GUILayout.Button("All", GUILayout.ExpandWidth(false)))
                     {
-                        bulkAssets.ForEach(info => AI.SetAssetBackup(info, true));
+                        bulkAssets.ForEach(info => AI.SetAssetBackup(info, true, false));
+                        AI.TriggerPackageRefresh();
                     }
                     if (GUILayout.Button("None", GUILayout.ExpandWidth(false)))
                     {
-                        bulkAssets.ForEach(info => AI.SetAssetBackup(info, false));
+                        bulkAssets.ForEach(info => AI.SetAssetBackup(info, false, false));
+                        AI.TriggerPackageRefresh();
                     }
                     GUILayout.EndHorizontal();
                 });
@@ -1819,7 +2094,7 @@ namespace AssetInventory
             UIBlock("package.bulk.actions.extract", () =>
             {
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Extract", "Will keep the package extracted in the cache to minimize access delays at the cost of more hard disk space."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                EditorGUILayout.LabelField(UIStyles.Content("Keep Cached", "Will keep the package extracted in the cache to minimize access delays at the cost of more hard disk space."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                 if (GUILayout.Button("All", GUILayout.ExpandWidth(false)))
                 {
                     bulkAssets.ForEach(info => AI.SetAssetExtraction(info, true));
@@ -1852,22 +2127,25 @@ namespace AssetInventory
                 GUILayout.EndHorizontal();
             });
 
-            UIBlock("package.bulk.actions.aiusage", () =>
+            if (AI.Actions.CreateAICaptions)
             {
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("AI Captions", "Activate to create backups for this asset (done after every update cycle)."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                if (GUILayout.Button("All", GUILayout.ExpandWidth(false)))
+                UIBlock("package.bulk.actions.aiusage", () =>
                 {
-                    bulkAssets.ForEach(info => AI.SetAssetAIUse(info, true, false));
-                    AI.TriggerPackageRefresh();
-                }
-                if (GUILayout.Button("None", GUILayout.ExpandWidth(false)))
-                {
-                    bulkAssets.ForEach(info => AI.SetAssetAIUse(info, false, false));
-                    AI.TriggerPackageRefresh();
-                }
-                GUILayout.EndHorizontal();
-            });
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("AI Captions", "Activate to create backups for this asset (done after every update cycle)."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    if (GUILayout.Button("All", GUILayout.ExpandWidth(false)))
+                    {
+                        bulkAssets.ForEach(info => AI.SetAssetAIUse(info, true, false));
+                        AI.TriggerPackageRefresh();
+                    }
+                    if (GUILayout.Button("None", GUILayout.ExpandWidth(false)))
+                    {
+                        bulkAssets.ForEach(info => AI.SetAssetAIUse(info, false, false));
+                        AI.TriggerPackageRefresh();
+                    }
+                    GUILayout.EndHorizontal();
+                });
+            }
 
             // determine download status, a bit expensive but happens only in bulk selections
             ProfileMarkerBulk.Begin();
@@ -1878,7 +2156,7 @@ namespace AssetInventory
             int downloading = 0;
             int paused = 0;
             long remainingBytes = 0;
-            foreach (AssetInfo info in bulkAssets.Where(a => a.WasOutdated || !a.IsDownloaded || a.IsUpdateAvailable(_assets, false)))
+            foreach (AssetInfo info in bulkAssets.Where(a => a.ParentId == 0 && (a.WasOutdated || !a.IsDownloaded || a.IsUpdateAvailable(_assets, false))))
             {
                 if (info.AssetSource == Asset.Source.RegistryPackage)
                 {
@@ -1934,7 +2212,7 @@ namespace AssetInventory
             if (updateAvailable > 0)
             {
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("Cache Updates" + initializing, EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                EditorGUILayout.LabelField("Updates" + initializing, EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                 if (GUILayout.Button("Download " + (downloading > 0 ? "remaining " : "") + updateAvailable, GUILayout.ExpandWidth(false)))
                 {
                     foreach (AssetInfo info in bulkAssets.Where(a => a.IsUpdateAvailable(_assets) && a.PackageDownloader != null))
@@ -1980,14 +2258,42 @@ namespace AssetInventory
             }
             EditorGUILayout.Space();
 
-            UIBlock("package.bulk.actions.import", () =>
+            int packageCount = bulkAssets.Count(a => a.AssetSource == Asset.Source.RegistryPackage);
+            int installedPackageCount = bulkAssets.Count(a => a.AssetSource == Asset.Source.RegistryPackage && a.InstalledPackageVersion() != null);
+            string buttonText = "Import...";
+            if (packageCount == bulkAssets.Count)
             {
-                if (GUILayout.Button("Import..."))
+                buttonText = "Install...";
+            }
+            else if (packageCount > 0)
+            {
+                buttonText = "Import & Install...";
+            }
+            if (bulkAssets.Count > installedPackageCount)
+            {
+                UIBlock("package.bulk.actions.import", () =>
                 {
-                    ImportUI importUI = ImportUI.ShowWindow();
-                    importUI.Init(bulkAssets);
-                }
-            });
+                    if (GUILayout.Button(buttonText))
+                    {
+                        ImportUI importUI = ImportUI.ShowWindow();
+                        importUI.Init(bulkAssets);
+                    }
+                });
+            }
+            if (installedPackageCount > 0)
+            {
+                UIBlock("package.bulk.actions.uninstall", () =>
+                {
+                    if (GUILayout.Button($"Uninstall {installedPackageCount} Package{(installedPackageCount > 1 ? "s" : "")}"))
+                    {
+                        if (EditorUtility.DisplayDialog("Confirm", $"Are you sure you want to uninstall {installedPackageCount} packages?", "OK", "Cancel"))
+                        {
+                            RemovalUI removalUI = RemovalUI.ShowWindow();
+                            removalUI.Init(bulkAssets.Where(a => a.AssetSource == Asset.Source.RegistryPackage && a.InstalledPackageVersion() != null).ToList());
+                        }
+                    }
+                });
+            }
             UIBlock("package.bulk.actions.openlocation", () =>
             {
                 if (GUILayout.Button(UIStyles.Content("Open Package Locations...")))
@@ -2000,17 +2306,20 @@ namespace AssetInventory
             {
                 if (GUILayout.Button(UIStyles.Content("Reindex Packages on Next Run", "Will mark packages as outdated and force a reindex the next time Update Index is called on the Settings tab.")))
                 {
-                    bulkAssets.ForEach(info => AI.ForgetPackage(info, true));
-                    _requireLookupUpdate = ChangeImpact.Write;
-                    _requireSearchUpdate = true;
-                    _requireAssetTreeRebuild = true;
+                    if (EditorUtility.DisplayDialog("Confirm", $"Are you sure you want to reindex {bulkAssets.Count} packages? They will be parsed once you start the next action run.", "OK", "Cancel"))
+                    {
+                        bulkAssets.ForEach(info => AI.ForgetPackage(info, true));
+                        _requireLookupUpdate = ChangeImpact.Write;
+                        _requireSearchUpdate = true;
+                        _requireAssetTreeRebuild = true;
+                    }
                 }
             });
             UIBlock("package.bulk.actions.refreshmetadata", () =>
             {
                 if (GUILayout.Button(UIStyles.Content("Refresh Metadata", "Will fetch most up-to-date metadata from the Asset Store.")))
                 {
-                    bulkAssets.ForEach(info => FetchAssetDetails(true, info.AssetId, true));
+                    bulkAssets.ForEach(info => AI.Actions.FetchAssetDetails(true, info.AssetId, true));
                 }
             });
             UIBlock("package.bulk.actions.recreatepreviews", () =>
@@ -2023,10 +2332,10 @@ namespace AssetInventory
             });
             UIBlock("package.bulk.actions.export", () =>
             {
-                if (GUILayout.Button("Export packages..."))
+                if (GUILayout.Button("Export Packages..."))
                 {
                     ExportUI exportUI = ExportUI.ShowWindow();
-                    exportUI.Init(bulkAssets, 1);
+                    exportUI.Init(bulkAssets, 0, assetMchState.visibleColumns);
                 }
             });
 
@@ -2051,15 +2360,18 @@ namespace AssetInventory
             {
                 if (GUILayout.Button(UIStyles.Content("Delete Packages from File System", "Delete the packages directly from the cache in the file system.")))
                 {
-                    bulkAssets.ForEach(info =>
+                    if (EditorUtility.DisplayDialog("Confirm", $"Are you sure you want to delete {bulkAssets.Count} files?", "OK", "Cancel"))
                     {
-                        if (File.Exists(info.GetLocation(true)))
+                        bulkAssets.ForEach(info =>
                         {
-                            File.Delete(info.GetLocation(true));
-                            info.Refresh();
-                        }
-                    });
-                    _requireSearchUpdate = true;
+                            if (File.Exists(info.GetLocation(true)))
+                            {
+                                File.Delete(info.GetLocation(true));
+                                info.Refresh();
+                            }
+                        });
+                        _requireSearchUpdate = true;
+                    }
                 }
             });
 
@@ -2074,14 +2386,12 @@ namespace AssetInventory
                     x = CalcTagSize(x, tagName);
                     UIStyles.DrawTag(tagName, bulkTag.Value.Item2, () =>
                     {
-                        Tagging.RemovePackageTagAssignment(bulkAssets, bulkTag.Key, true);
+                        Tagging.RemovePackageAssignment(bulkAssets, bulkTag.Key, true);
                         _requireAssetTreeRebuild = true;
                     }, UIStyles.TagStyle.Remove);
                 }
                 GUILayout.EndHorizontal();
             });
-
-            RenderExpandButton();
 
             if (useScroll) GUILayout.EndScrollView();
             GUILayout.EndVertical();
@@ -2089,6 +2399,16 @@ namespace AssetInventory
 
         private void CreateAssetTree()
         {
+            // sync sort state between column headers and model
+            if (assetMchState != null)
+            {
+                assetMchState.sortedColumnIndex = AI.Config.assetSorting;
+                if (assetMchState.columns.Length > assetMchState.sortedColumnIndex)
+                {
+                    assetMchState.columns[assetMchState.sortedColumnIndex].sortedAscending = !AI.Config.sortAssetsDescending;
+                }
+            }
+
             _requireAssetTreeRebuild = false;
             _visiblePackageCount = 0;
             List<AssetInfo> data = new List<AssetInfo>();
@@ -2315,7 +2635,7 @@ namespace AssetInventory
                     break;
 
                 case 2: // category
-                    orderedAssets = filteredAssets.OrderBy(a => a.GetDisplayCategory(), StringComparer.OrdinalIgnoreCase)
+                    orderedAssets = filteredAssets.OrderBy(a => a.GetDisplayCategory(), new PathComparer())
                         .ThenBy(a => a.GetDisplayName(), StringComparer.OrdinalIgnoreCase);
 
                     string[] noCat = {"-no category-"};
@@ -2591,6 +2911,10 @@ namespace AssetInventory
                     result = list.SortBy(a => a.KeepExtracted, asc);
                     break;
 
+                case (int)Columns.ForeignId:
+                    result = list.SortBy(a => a.ForeignId, asc);
+                    break;
+
                 case (int)Columns.Popularity:
                     result = list.SortBy(a => a.Hotness, asc);
                     break;
@@ -2624,7 +2948,7 @@ namespace AssetInventory
                     break;
 
                 case (int)Columns.Price:
-                    result = list.SortBy(a => a.GetPriceText(), asc);
+                    result = list.SortBy(a => a.GetPrice(), asc);
                     break;
 
                 case (int)Columns.Publisher:
@@ -2668,7 +2992,7 @@ namespace AssetInventory
                     break;
 
                 case (int)Columns.Update:
-                    result = list.SortBy(a => a.IsUpdateAvailable(), asc);
+                    result = list.SortBy(a => a.AssetSource == Asset.Source.AssetStorePackage && a.IsUpdateAvailable(), asc);
                     break;
 
                 case (int)Columns.UpdateDate:
@@ -2680,7 +3004,67 @@ namespace AssetInventory
                     break;
 
                 default:
+#if UNITY_2021_2_OR_NEWER
+                    int metaId = AssetTreeView.multiColumnHeader.GetColumn(AI.Config.assetSorting).userData;
+                    MetadataInfo metaDef = list.Where(a => a.PackageMetadata != null && a.PackageMetadata.Any(pm => pm.DefinitionId == metaId)).Select(a => a.PackageMetadata.First(pm => pm.DefinitionId == metaId)).FirstOrDefault();
+                    if (metaDef != null)
+                    {
+                        switch (metaDef.Type)
+                        {
+                            case MetadataDefinition.DataType.Boolean:
+                                result = list.SortBy(a =>
+                                {
+                                    MetadataInfo meta = a.PackageMetadata?.FirstOrDefault(m => m.DefinitionId == metaId);
+                                    if (meta == null) return 0;
+                                    return meta.BoolValue ? 1 : 0;
+                                }, asc);
+                                break;
+
+                            case MetadataDefinition.DataType.Text:
+                            case MetadataDefinition.DataType.BigText:
+                            case MetadataDefinition.DataType.Url:
+                            case MetadataDefinition.DataType.SingleSelect:
+                                result = list.SortBy(a =>
+                                {
+                                    MetadataInfo meta = a.PackageMetadata?.FirstOrDefault(m => m.DefinitionId == metaId);
+                                    if (meta == null) return null;
+                                    return meta.StringValue;
+                                }, asc);
+                                break;
+
+                            case MetadataDefinition.DataType.Date:
+                            case MetadataDefinition.DataType.DateTime:
+                                result = list.SortBy(a =>
+                                {
+                                    MetadataInfo meta = a.PackageMetadata?.FirstOrDefault(m => m.DefinitionId == metaId);
+                                    if (meta == null) return default;
+                                    return meta.DateTimeValue;
+                                }, asc);
+                                break;
+
+                            case MetadataDefinition.DataType.Number:
+                                result = list.SortBy(a =>
+                                {
+                                    MetadataInfo meta = a.PackageMetadata?.FirstOrDefault(m => m.DefinitionId == metaId);
+                                    if (meta == null) return 0;
+                                    return meta.IntValue;
+                                }, asc);
+                                break;
+
+                            case MetadataDefinition.DataType.DecimalNumber:
+                                result = list.SortBy(a =>
+                                {
+                                    MetadataInfo meta = a.PackageMetadata?.FirstOrDefault(m => m.DefinitionId == metaId);
+                                    if (meta == null) return 0f;
+                                    return meta.FloatValue;
+                                }, asc);
+                                break;
+
+                        }
+                    }
+#else 
                     Debug.LogError($"Missing sorting support for column {AI.Config.assetSorting}");
+#endif
                     break;
 
             }
@@ -2725,10 +3109,21 @@ namespace AssetInventory
         {
             AI.Config.tab = 1;
             _assetSearchPhrase = "";
-            ResetPackageFilters();
+
+            ResetPackageFilters(false);
+
             if (AI.Config.packageViewMode == 0)
             {
                 await SelectAndFrame(info);
+
+                // ensure package is visible
+                if (!AssetTreeModel.GetData().Contains(info))
+                {
+                    AI.Config.packagesListing = 0;
+                    ResetPackageFilters(false);
+                    await SelectAndFrame(info);
+                }
+
                 HandleAssetTreeSelectionChanged(AssetTreeView.GetSelection());
             }
             else
@@ -2790,7 +3185,7 @@ namespace AssetInventory
             // refresh metadata automatically for single selections
             if (_selectedTreeAsset != null && AI.Config.autoRefreshMetadata && _selectedTreeAsset.ForeignId > 0 && (DateTime.Now - _selectedTreeAsset.LastOnlineRefresh).TotalHours >= AI.Config.metadataTimeout)
             {
-                FetchAssetDetails(true, _selectedTreeAsset.AssetId, true); // skip downstream events to avoid hick-ups
+                AI.Actions.FetchAssetDetails(true, _selectedTreeAsset.AssetId, _selectedTreeAsset.LastOnlineRefresh > DateTime.MinValue); // skip downstream events to avoid hick-ups
             }
         }
 
@@ -2848,6 +3243,7 @@ namespace AssetInventory
         private void OnAssetTreeSelectionChanged(IList<int> ids)
         {
             _selectedMedia = 0;
+            _packageInspectorTab = 0;
             HandleAssetTreeSelectionChanged(ids);
         }
 

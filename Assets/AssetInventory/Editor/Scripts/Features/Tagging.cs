@@ -15,7 +15,7 @@ namespace AssetInventory
         {
             get
             {
-                if (_tags == null) LoadTagAssignments();
+                if (_tags == null) LoadAssignments();
                 return _tags;
             }
         }
@@ -23,7 +23,7 @@ namespace AssetInventory
 
         internal static int TagHash { get; private set; }
 
-        public static bool AddTagAssignment(int targetId, string tag, TagAssignment.Target target, bool fromAssetStore = false)
+        public static bool AddAssignment(int targetId, string tag, TagAssignment.Target target, bool fromAssetStore = false)
         {
             Tag existingT = AddTag(tag, fromAssetStore);
             if (existingT == null) return false;
@@ -37,48 +37,48 @@ namespace AssetInventory
             return true;
         }
 
-        public static bool AddTagAssignment(AssetInfo info, string tag, TagAssignment.Target target, bool byUser = false)
+        public static bool AddAssignment(AssetInfo info, string tag, TagAssignment.Target target, bool byUser = false)
         {
-            if (!AddTagAssignment(target == TagAssignment.Target.Asset ? info.Id : info.AssetId, tag, target)) return false;
+            if (!AddAssignment(target == TagAssignment.Target.Asset ? info.Id : info.AssetId, tag, target)) return false;
 
-            LoadTagAssignments(info);
+            LoadAssignments(info);
             if (byUser && target == TagAssignment.Target.Asset && info.AssetSource == Asset.Source.AssetManager) AddRemoteTag(info, tag);
 
             return true;
         }
 
-        public static void RemoveTagAssignment(AssetInfo info, TagInfo tagInfo, bool autoReload = true, bool byUser = false)
+        public static void RemoveAssignment(AssetInfo info, TagInfo tagInfo, bool autoReload = true, bool byUser = false)
         {
             DBAdapter.DB.Delete<TagAssignment>(tagInfo.Id);
 
-            if (autoReload) LoadTagAssignments(info);
+            if (autoReload) LoadAssignments(info);
             if (byUser && tagInfo.TagTarget == TagAssignment.Target.Asset && info.AssetSource == Asset.Source.AssetManager) RemoveRemoteTag(info, tagInfo.Name);
         }
 
-        public static void RemoveAssetTagAssignment(List<AssetInfo> infos, string name, bool byUser)
+        public static void RemoveAssetAssignments(List<AssetInfo> infos, string name, bool byUser)
         {
             infos.ForEach(info =>
             {
                 TagInfo tagInfo = info.AssetTags?.Find(t => t.Name == name);
                 if (tagInfo == null) return;
-                RemoveTagAssignment(info, tagInfo, false, byUser);
+                RemoveAssignment(info, tagInfo, false, byUser);
                 info.AssetTags.RemoveAll(t => t.Name == name);
                 info.SetTagsDirty();
             });
-            LoadTagAssignments();
+            LoadAssignments();
         }
 
-        public static void RemovePackageTagAssignment(List<AssetInfo> infos, string name, bool byUser)
+        public static void RemovePackageAssignment(List<AssetInfo> infos, string name, bool byUser)
         {
             infos.ForEach(info =>
             {
                 TagInfo tagInfo = info.PackageTags?.Find(t => t.Name == name);
                 if (tagInfo == null) return;
-                RemoveTagAssignment(info, tagInfo, false, byUser);
+                RemoveAssignment(info, tagInfo, false, byUser);
                 info.PackageTags.RemoveAll(t => t.Name == name);
                 info.SetTagsDirty();
             });
-            LoadTagAssignments();
+            LoadAssignments();
         }
 
         private static async void AddRemoteTag(AssetInfo info, string tagName)
@@ -105,7 +105,7 @@ namespace AssetInventory
 #endif
         }
 
-        internal static void LoadTagAssignments(AssetInfo info = null, bool triggerEvents = true)
+        internal static void LoadAssignments(AssetInfo info = null, bool triggerEvents = true)
         {
             string dataQuery = "SELECT *, TagAssignment.Id as Id from TagAssignment inner join Tag on Tag.Id = TagAssignment.TagId order by TagTarget, TargetId";
             _tags = DBAdapter.DB.Query<TagInfo>($"{dataQuery}").ToList();
@@ -130,7 +130,7 @@ namespace AssetInventory
         public static void SaveTag(Tag tag)
         {
             DBAdapter.DB.Update(tag);
-            LoadTagAssignments();
+            LoadAssignments();
         }
 
         public static Tag AddTag(string name, bool fromAssetStore = false)
@@ -163,14 +163,14 @@ namespace AssetInventory
 
             tag.Name = newName;
             DBAdapter.DB.Update(tag);
-            LoadTagAssignments();
+            LoadAssignments();
         }
 
         public static void DeleteTag(Tag tag)
         {
             DBAdapter.DB.Execute("DELETE from TagAssignment where TagId=?", tag.Id);
             DBAdapter.DB.Delete<Tag>(tag.Id);
-            LoadTagAssignments();
+            LoadAssignments();
         }
 
         public static List<Tag> LoadTags()

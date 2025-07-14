@@ -1,34 +1,35 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-public class StaminaUI : MonoBehaviour {
-    [Header("References")]
-    [SerializeField] private Image staminaSlider;
-    [SerializeField] private StaminaSystem StaminaSystem;
+public class StaminaUI : UI {
+	[Header("References")]
+	[SerializeField] private Image _staminaSlider;
+	private StaminaSystem _staminaSystem;
 
-    [Header("Values")]
-    [Tooltip("How long the tooltip can be inactive before it disapears")]
-    [SerializeField] private float disapearAfterTime;
-    
-    private float maxStamina;
-    private float oneStaminaFillAmount;
-    
-    private void Start() {
-        maxStamina = StaminaSystem.GetMaxStamina;
-        oneStaminaFillAmount = 1 / maxStamina;
-        StaminaSystem.StaminaRecharging.AddListener(UpdateStaminaUI);
-        staminaSlider.fillAmount = 1f;
-    }
+	[Header("Values")]
+	[Tooltip("How long the tooltip can be inactive before it disapears")]
+	[SerializeField] private float disapearAfterTime;
 
-    private void OnDisable() {
-        StaminaSystem.StaminaRecharging.RemoveListener(UpdateStaminaUI);
-    }
+	private float maxStamina;
+	private float oneStaminaFillAmount;
 
-    private void Update() {
+	private void Start() {
+		_staminaSystem = GameManager.Instance._staminaSystem;
+		maxStamina = _staminaSystem.GetMaxStamina;
+		oneStaminaFillAmount = 1 / maxStamina;
+		_staminaSlider.fillAmount = 1f;
 
-    }
+		// Events
+		_staminaSystem.OnStaminaRecharging.AddListener(UpdateStaminaUI);
+		GameManager.Instance.OnGameLose.AddListener(DisableUI);
+		GameManager.Instance.OnGameWin.AddListener(DisableUI);
+	}
 
-    private void UpdateStaminaUI(int stamina, float rechargePercentage) {
-        staminaSlider.fillAmount = Mathf.Clamp(stamina * oneStaminaFillAmount + oneStaminaFillAmount * rechargePercentage, 0f, 1f);
-    }
+	private void OnDisable() {
+		_staminaSystem.OnStaminaRecharging.RemoveListener(UpdateStaminaUI);
+	}
+
+	private void UpdateStaminaUI(int stamina, float rechargePercentage) {
+		_staminaSlider.fillAmount = Mathf.Clamp(stamina * oneStaminaFillAmount + oneStaminaFillAmount * rechargePercentage, 0f, 1f);
+	}
 }

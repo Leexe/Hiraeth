@@ -8,7 +8,7 @@
 			<value>1</value>
 		</property>
 		<relationship name="folder">
-			<destination>{04a6e5cf-98df-4465-9e4c-8121928012eb}</destination>
+			<destination>{d5ab072b-54ed-4443-92de-a9f5e62a8af3}</destination>
 		</relationship>
 		<relationship name="mixer">
 			<destination>{3d998a0d-0b0f-47fb-b905-9e09adaf647f}</destination>
@@ -53,7 +53,7 @@
 			<destination>{08ad9830-2732-4217-9563-e3fd150c3a8e}</destination>
 		</relationship>
 		<relationship name="output">
-			<destination>{054981bc-4193-4069-ad6b-44f061e7560c}</destination>
+			<destination>{e617f3ed-beaa-4d35-a28a-54635e99b770}</destination>
 		</relationship>
 	</object>
 	<object class="EventAutomatableProperties" id="{efdfb174-5595-4236-8a54-7e5b85137fa5}" />
@@ -71,13 +71,10 @@
 			<destination>{ba09466f-fa63-4ccf-bf88-6f52e3d3f57f}</destination>
 		</relationship>
 		<relationship name="markers">
-			<destination>{7d81c41d-cf25-4e79-9f69-bcd13aa30f91}</destination>
+			<destination>{f014f6c8-18e9-47f3-9d1c-24c248eea85c}</destination>
 		</relationship>
 	</object>
 	<object class="EventMixerMaster" id="{b93975e2-a510-4874-9888-811084c3886c}">
-		<property name="volume">
-			<value>-21.5</value>
-		</property>
 		<relationship name="modulators">
 			<destination>{4b3e4b7a-f61b-4af1-afbe-23811cb2725d}</destination>
 		</relationship>
@@ -106,6 +103,9 @@
 		</relationship>
 	</object>
 	<object class="EventMixerGroup" id="{fed246f3-73c6-4214-a0a2-98ab499347dc}">
+		<property name="volume">
+			<value>-6.5</value>
+		</property>
 		<property name="name">
 			<value>Audio 1</value>
 		</property>
@@ -119,7 +119,7 @@
 			<destination>{b93975e2-a510-4874-9888-811084c3886c}</destination>
 		</relationship>
 	</object>
-	<object class="LoopRegion" id="{7d81c41d-cf25-4e79-9f69-bcd13aa30f91}">
+	<object class="LoopRegion" id="{f014f6c8-18e9-47f3-9d1c-24c248eea85c}">
 		<property name="position">
 			<value>0</value>
 		</property>

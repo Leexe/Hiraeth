@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using SQLite;
 using UnityEngine;
@@ -7,11 +9,8 @@ namespace AssetInventory
 {
     public sealed class ColorImporter : AssetImporter
     {
-        public async Task Index()
+        public async Task Run()
         {
-            ResetState(false);
-            int progressId = MetaProgress.Start("Extracting color information");
-
             string previewFolder = AI.GetPreviewFolder();
 
             TableQuery<AssetFile> query = DBAdapter.DB.Table<AssetFile>()
@@ -20,36 +19,52 @@ namespace AssetInventory
             // skip audio files per default
             if (!AI.Config.extractAudioColors)
             {
-                foreach (string t in AI.TypeGroups["Audio"])
+                foreach (string t in AI.TypeGroups[AI.AssetGroup.Audio])
                 {
                     query = query.Where(a => a.Type != t);
                 }
             }
 
             List<AssetFile> files = query.ToList();
+
+            int maxDegreeOfParallelism = Environment.ProcessorCount;
+            SemaphoreSlim semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
+            List<Task> tasks = new List<Task>();
+
+            MainCount = files.Count;
             for (int i = 0; i < files.Count; i++)
             {
                 if (CancellationRequested) break;
-                await Cooldown.Do();
+                await semaphore.WaitAsync();
+                await AI.Cooldown.Do();
 
                 AssetFile file = files[i];
-                MetaProgress.Report(progressId, i + 1, files.Count, file.FileName);
-                SubCount = files.Count;
-                CurrentSub = $"Color extraction from {file.FileName}";
-                SubProgress = i + 1;
+                SetProgress(file.FileName, i + 1);
 
-                string previewFile = ValidatePreviewFile(file, previewFolder);
-                if (string.IsNullOrEmpty(previewFile)) continue;
-
-                Texture2D texture = await AssetUtils.LoadLocalTexture(previewFile, false);
-                if (texture != null)
+                async Task ProcessFile(AssetFile curFile)
                 {
-                    file.Hue = ImageUtils.GetHue(texture);
-                    Persist(file);
+                    try
+                    {
+                        string previewFile = ValidatePreviewFile(curFile, previewFolder);
+                        if (string.IsNullOrEmpty(previewFile)) return;
+
+                        Texture2D texture = await AssetUtils.LoadLocalTexture(previewFile, false);
+                        if (texture != null)
+                        {
+                            curFile.Hue = ImageUtils.GetHue(texture);
+                            UnityEngine.Object.DestroyImmediate(texture);
+                            Persist(curFile);
+                        }
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
                 }
+
+                tasks.Add(ProcessFile(file));
             }
-            MetaProgress.Remove(progressId);
-            ResetState(true);
+            await Task.WhenAll(tasks);
         }
     }
 }

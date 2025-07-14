@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AssetInventory
 {
@@ -10,10 +11,13 @@ namespace AssetInventory
         private const int LOG_IMAGE_RESIZING = 2;
         private const int LOG_AUDIO_PARSING = 4;
         private const int LOG_PACKAGE_PARSING = 8;
+        private const int LOG_CUSTOM_ACTION = 16;
 
         public int version = UpgradeUtil.CURRENT_CONFIG_VERSION;
         public int searchType;
         public int searchField;
+        public bool searchAICaptions = true;
+        public bool searchPackageNames;
         public int sortField;
         public bool sortDescending;
         public int maxResults = 5;
@@ -22,14 +26,13 @@ namespace AssetInventory
         public int tileText;
         public bool allowEasyMode = true;
         public bool autoPlayAudio = true;
-        public int autoCalculateDependencies; // 0 - none, 1 - all, 2 - only simple, no fbx
+        public int autoCalculateDependencies = 1; // 0 - none, 1 - all, 2 - only simple, no fbx
         public bool allowCrossPackageDependencies = true;
         public bool loopAudio;
         public bool pingSelected = true;
         public bool pingImported = true;
         public int doubleClickBehavior = 1; // 0 = none, 1 = import, 2 = open
         public bool groupLists = true;
-        public bool autoHideSettings;
         public bool showTileSizeSlider;
         public bool keepAutoDownloads;
         public bool limitAutoDownloads;
@@ -51,6 +54,7 @@ namespace AssetInventory
 
         public float rowHeightMultiplier = 1.1f;
         public int previewChunkSize = 20;
+        public int previewSize = 128;
         public int mediaHeight = 350;
         public int mediaThumbnailWidth = 120;
         public int mediaThumbnailHeight = 75;
@@ -58,22 +62,21 @@ namespace AssetInventory
         public int packageTileSize = 150;
         public int noPackageTileTextBelow = 110;
         public int tagListHeight = 250;
+        public int tileMargin = 2;
         public bool enlargeTiles = true;
         public bool centerTiles;
         public int[] visiblePackageTreeColumns;
 
-        public bool showSearchFilterBar;
-        public bool showSearchDetailsBar = true;
-        public bool filterOnlyIfBarVisible;
-        public bool showPackageFilterBar;
+        public bool showSearchSideBar = true;
         public bool expandPackageDetails;
-        public bool showDetailFilters = true;
-        public bool showSavedSearches = true;
-        public bool showIndexLocations = true;
+        public bool showPreviews = true;
         public bool showIndexingSettings;
+        public bool showFolderSettings;
+        public bool showAMSettings;
         public bool showImportSettings;
         public bool showBackupSettings;
         public bool showAISettings;
+        public bool showLocationSettings;
         public bool showPreviewSettings;
         public bool showAdvancedSettings;
         public bool showHints = true;
@@ -83,21 +86,14 @@ namespace AssetInventory
         public bool onlyInProject;
         public int projectDetailTabsMode; // 0 = tabs, 1 = list
 
-        public bool indexAssetStore = true;
-        public bool indexAssetCache = true;
-        public bool indexPackageCache;
-        public bool indexAdditionalFolders = true;
-        public bool indexAssetManager;
         public bool excludeHidden = true;
-        public int assetStoreRefreshCycle = 7; // days
+        public int assetStoreRefreshCycle = 3; // days
         public int assetCacheLocationType; // 0 = auto, 1 = custom
         public string assetCacheLocation;
         public int packageCacheLocationType; // 0 = auto, 1 = custom
         public string packageCacheLocation;
-        public bool downloadAssets = true;
         public bool gatherExtendedMetadata = true;
         public bool extractPreviews = true;
-        public bool extractColors;
         public bool extractAudioColors;
         public bool excludeByDefault;
         public bool extractByDefault;
@@ -112,7 +108,6 @@ namespace AssetInventory
         public bool showIndirectPackageUpdates;
         public bool removeUnresolveableDBFiles;
 
-        public bool createAICaptions;
         public bool logAICaptions;
         public bool aiForPrefabs = true;
         public bool aiForModels;
@@ -122,6 +117,7 @@ namespace AssetInventory
         public bool aiContinueOnEmpty;
         public bool aiUseGPU;
         public int aiPause;
+        public string aiToolPath;
 
         public bool upscalePreviews = true;
         public bool upscaleLossless = true;
@@ -132,25 +128,31 @@ namespace AssetInventory
         public int cooldownInterval = 20; // minutes
         public int cooldownDuration = 20; // seconds
         public int reportingBatchSize = 500;
-        public long memoryLimit = (1024 * 1024) * 1000; // every X megabytes
-        public int logAreas = LOG_IMAGE_RESIZING | LOG_AUDIO_PARSING | LOG_MEDIA_DOWNLOADS | LOG_PACKAGE_PARSING;
+        public long memoryLimit = (1024 * 1024) * 1000L; // every X megabytes
+        public bool limitCacheSize = true;
+        public int cacheLimit = 60; // in gigabyte
+        public int logAreas = LOG_IMAGE_RESIZING | LOG_AUDIO_PARSING | LOG_MEDIA_DOWNLOADS | LOG_PACKAGE_PARSING | LOG_CUSTOM_ACTION;
         public int dbOptimizationPeriod = 30; // days
         public int dbOptimizationReminderPeriod = 1; // days
         public string dbJournalMode = "WAL"; // DELETE is an alternative for better compatibility while WAL is faster
+        public bool askedForAffiliateLinks;
+        public bool useAffiliateLinks;
 
-        public bool createBackups;
         public bool backupByDefault;
         public bool onlyLatestPatchVersion = true;
         public int backupsPerAsset = 5;
         public string backupFolder;
         public string cacheFolder;
+        public string previewFolder;
         public string exportFolder;
         public string exportFolder2;
         public string exportFolder3;
+        public TemplateExportSettings templateExportSettings = new TemplateExportSettings();
 
         public int importStructure = 1;
         public int importDestination = 2;
         public string importFolder = "Assets/ThirdParty";
+        public bool removeLODs;
 
         public int assetSorting;
         public bool sortAssetsDescending;
@@ -169,6 +171,7 @@ namespace AssetInventory
         public int tab;
         public ulong statsImports;
 
+        public List<UpdateActionStates> actionStates = new List<UpdateActionStates>();
         public List<FolderSpec> folders = new List<FolderSpec>();
         public List<SavedSearch> searches = new List<SavedSearch>();
 
@@ -177,13 +180,20 @@ namespace AssetInventory
         public bool LogImageExtraction => (logAreas & LOG_IMAGE_RESIZING) != 0;
         public bool LogAudioParsing => (logAreas & LOG_AUDIO_PARSING) != 0;
         public bool LogPackageParsing => (logAreas & LOG_PACKAGE_PARSING) != 0;
+        public bool LogCustomActions => (logAreas & LOG_CUSTOM_ACTION) != 0;
 
         // UI customization
+        public List<UISection> uiSections = new List<UISection>();
         public HashSet<string> advancedUI;
 
         public AssetInventorySettings()
         {
             ResetAdvancedUI();
+        }
+
+        public UISection GetSection(string name)
+        {
+            return uiSections.FirstOrDefault(s => s.name == name);
         }
 
         public void ResetAdvancedUI()
@@ -204,11 +214,13 @@ namespace AssetInventory
                 "package.exclude",
                 "package.extract",
                 "package.indexedfiles",
+                "package.metadata",
                 "package.price",
                 "package.purchasedate",
                 "package.releasedate",
                 "package.srps",
                 "package.unityversions",
+                "package.actions.layout",
                 "package.actions.openinpackagemanager",
                 "package.actions.reindexnextrun",
                 "package.actions.recreatemissingpreviews",

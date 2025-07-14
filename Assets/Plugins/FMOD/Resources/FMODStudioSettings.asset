@@ -463,8 +463,8 @@ MonoBehaviour:
   switchSettingsMigration: 1
   HasSourceProject: 1
   HasPlatforms: 1
-  sourceProjectPath: Assets/FMOD_Banks/FMOD_Banks.fspro
-  sourceBankPath: Assets/FMOD_Banks/Build
+  sourceProjectPath: FMOD_Banks/Hireath SFX.fspro
+  sourceBankPath: FMOD_Banks/Build
   sourceBankPathUnformatted: 
   BankRefreshCooldown: 5
   ShowBankRefreshWindow: 1
@@ -487,7 +487,10 @@ MonoBehaviour:
   Plugins: []
   MasterBanks:
   - Master
-  Banks: []
+  Banks:
+  - Enemies
+  - Music
+  - Pause Menu
   BanksToLoad: []
   LiveUpdatePort: 9264
   EnableMemoryTracking: 0

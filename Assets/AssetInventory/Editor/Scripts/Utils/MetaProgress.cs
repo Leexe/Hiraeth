@@ -18,6 +18,7 @@ namespace AssetInventory
 
         public static void Report(int id, float progress, string description)
         {
+            if (id <= 0) return;
 #if UNITY_2020_1_OR_NEWER
             Progress.Report(id, progress, description);
 #endif
@@ -25,6 +26,7 @@ namespace AssetInventory
 
         public static void Report(int id, int currentStep, int totalSteps, string description)
         {
+            if (id <= 0) return;
 #if UNITY_2020_1_OR_NEWER
             Progress.Report(id, currentStep, totalSteps, description);
 #endif
@@ -32,6 +34,7 @@ namespace AssetInventory
 
         public static int Remove(int id)
         {
+            if (id <= 0) return id;
 #if UNITY_2020_1_OR_NEWER
             return Progress.Remove(id);
 #else

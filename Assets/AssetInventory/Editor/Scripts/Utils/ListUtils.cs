@@ -6,6 +6,14 @@ namespace AssetInventory
 {
     public static class ListUtils
     {
+        public static void ForEach<T>(this IEnumerable<T> source, Action<T> action)
+        {
+            foreach (T element in source)
+            {
+                action(element);
+            }
+        }
+
         public static void Populate<T>(this T[] arr, T value)
         {
             for (int i = 0; i < arr.Length; i++)

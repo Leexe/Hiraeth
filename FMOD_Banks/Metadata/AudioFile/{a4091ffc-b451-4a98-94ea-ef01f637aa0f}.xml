@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects serializationModel="Studio.02.03.00">
+	<object class="AudioFile" id="{a4091ffc-b451-4a98-94ea-ef01f637aa0f}">
+		<property name="assetPath">
+			<value>Reload (Hiraeth).wav</value>
+		</property>
+		<property name="frequencyInKHz">
+			<value>44.0999985</value>
+		</property>
+		<property name="channelCount">
+			<value>2</value>
+		</property>
+		<property name="length">
+			<value>1.8317233560090702</value>
+		</property>
+		<relationship name="masterAssetFolder">
+			<destination>{0cdd2f33-06a0-45b2-9792-4f5887acd8b3}</destination>
+		</relationship>
+	</object>
+</objects>

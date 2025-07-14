@@ -90,7 +90,7 @@ namespace AssetInventory
         public DateTime PurchaseDate { get; set; }
         public DateTime FirstRelease { get; set; }
         public DateTime LastRelease { get; set; }
-        public string AssetRating { get; set; }
+        public float AssetRating { get; set; }
         public int RatingCount { get; set; }
         public float Hotness { get; set; }
         public float PriceEur { get; set; }
@@ -98,7 +98,7 @@ namespace AssetInventory
         public float PriceCny { get; set; }
         public string Requirements { get; set; }
         public string ReleaseNotes { get; set; }
-        public string OfficialState { get; set; }
+        public string OfficialState { get; set; }  // published, deprecated, disabled  // TODO: switch to enum?
         public bool IsHidden { get; set; }
         [Indexed] public bool Exclude { get; set; }
         public bool Backup { get; set; }
@@ -106,8 +106,7 @@ namespace AssetInventory
 
         public bool UseAI { get; set; }
 
-        // TODO: convert to int
-        public string UploadId { get; set; }
+        public int UploadId { get; set; }
         public string ETag { get; set; }
         public DateTime LastOnlineRefresh { get; set; }
         public State CurrentState { get; set; }
@@ -364,8 +363,7 @@ namespace AssetInventory
         {
             if (ParentAsset != null) return ParentAsset.GetAssetOrigin();
 
-            int.TryParse(UploadId, out int uploadId);
-            return new AssetOrigin(ForeignId, string.IsNullOrEmpty(DisplayName) ? SafeName : DisplayName, Version, uploadId);
+            return new AssetOrigin(ForeignId, string.IsNullOrEmpty(DisplayName) ? SafeName : DisplayName, Version, UploadId);
         }
 
         public Asset GetRootAsset()

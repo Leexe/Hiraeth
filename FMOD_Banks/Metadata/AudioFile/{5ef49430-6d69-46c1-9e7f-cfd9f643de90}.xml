@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects serializationModel="Studio.02.03.00">
+	<object class="AudioFile" id="{5ef49430-6d69-46c1-9e7f-cfd9f643de90}">
+		<property name="assetPath">
+			<value>Hiraeth Song 3.wav</value>
+		</property>
+		<property name="frequencyInKHz">
+			<value>44.0999985</value>
+		</property>
+		<property name="channelCount">
+			<value>2</value>
+		</property>
+		<property name="length">
+			<value>155.6195238095238</value>
+		</property>
+		<relationship name="masterAssetFolder">
+			<destination>{0cdd2f33-06a0-45b2-9792-4f5887acd8b3}</destination>
+		</relationship>
+	</object>
+</objects>

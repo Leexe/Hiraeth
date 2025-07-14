@@ -60,7 +60,7 @@ Canvas:
   m_AdditionalShaderChannelsFlag: 25
   m_UpdateRectTransformForStandalone: 0
   m_SortingLayerID: 0
-  m_SortingOrder: 0
+  m_SortingOrder: -1
   m_TargetDisplay: 0
 --- !u!114 &2035484553007384112
 MonoBehaviour:
@@ -111,7 +111,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 6409896587822739289}
-  - component: {fileID: 6943096549478111004}
+  - component: {fileID: 1272122054260867928}
+  - component: {fileID: 1934279109708715196}
   m_Layer: 5
   m_Name: Hand
   m_TagString: Untagged
@@ -126,20 +127,20 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5241236097806646807}
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalRotation: {x: 0, y: 0, z: 0.026176924, w: 0.99965733}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 19.9, y: 10.63981, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 6579627036272566639}
   m_Father: {fileID: 6549254706435750678}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 3}
   m_AnchorMin: {x: 1, y: 0}
   m_AnchorMax: {x: 1, y: 0}
-  m_AnchoredPosition: {x: 22.899902, y: -34.430054}
+  m_AnchoredPosition: {x: 228.8, y: -315.9}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 1, y: 0}
---- !u!114 &6943096549478111004
+--- !u!114 &1272122054260867928
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -151,27 +152,31 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5207c84f4af7d9e4cb8515ebd74dcbe2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _handRectTransform: {fileID: 6579627036272566639}
-  handIdleAnimation:
-    startFromCurrent: 0
-    startValue: {x: 0, y: -9}
-    endValue: {x: 0, y: 9}
-    settings:
-      duration: 3
-      ease: 1
-      customEase:
-        serializedVersion: 2
-        m_Curve: []
-        m_PreInfinity: 2
-        m_PostInfinity: 2
-        m_RotationOrder: 4
-      cycles: -1
-      cycleMode: 1
-      startDelay: 0
-      endDelay: 0
-      useUnscaledTime: 0
-      _useFixedUpdate: 0
-      _updateType: 0
+  _animator: {fileID: 1934279109708715196}
+  _reloadAnimationClip: {fileID: 7400000, guid: 706992a1136ab6a4089f70003d409631, type: 2}
+  _shootAnimationClip: {fileID: 7400000, guid: a845a80ce72151845859ce5597226b07, type: 2}
+--- !u!95 &1934279109708715196
+Animator:
+  serializedVersion: 7
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5241236097806646807}
+  m_Enabled: 1
+  m_Avatar: {fileID: 0}
+  m_Controller: {fileID: 9100000, guid: 4fa902d862927f24b9503db59db89ffe, type: 2}
+  m_CullingMode: 0
+  m_UpdateMode: 0
+  m_ApplyRootMotion: 0
+  m_LinearVelocityBlending: 0
+  m_StabilizeFeet: 0
+  m_AnimatePhysics: 0
+  m_WarningMessage: 
+  m_HasTransformHierarchy: 1
+  m_AllowConstantClipSamplingOptimization: 1
+  m_KeepAnimatorStateOnDisable: 0
+  m_WriteDefaultValuesOnDisable: 0
 --- !u!1 &7808573916192934191
 GameObject:
   m_ObjectHideFlags: 0
@@ -197,13 +202,13 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7808573916192934191}
-  m_LocalRotation: {x: 0, y: 0, z: -0.049721323, w: 0.99876314}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 20.8, y: 10.639806, z: 17.994183}
+  m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 6409896587822739289}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: -5.7}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 1, y: 0}
   m_AnchorMax: {x: 1, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
@@ -231,13 +236,13 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_RaycastTarget: 1
+  m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 21300000, guid: fe7a768909bbe784ab2a223eb63c2160, type: 3}
+  m_Sprite: {fileID: 21300000, guid: 6dc218b630efc364fb747b454db7616d, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine;
@@ -7,6 +8,29 @@ namespace AssetInventory
 {
     public static class StringUtils
     {
+        public static string ExtractTokens(string input, string tokenName, List<string> tokenValues)
+        {
+            if (string.IsNullOrEmpty(input) || string.IsNullOrEmpty(tokenName)) return input;
+
+            // tokenValue is any sequence of non-whitespace characters
+            string pattern = $@"\b{Regex.Escape(tokenName)}:(\S+)";
+
+            // Use a MatchEvaluator to both capture the token and remove it in one go.
+            string result = Regex.Replace(input, pattern, match =>
+            {
+                string value = match.Groups[1].Value;
+                tokenValues.Add(value);
+
+                // Return an empty string to remove this token from the original text.
+                return string.Empty;
+            });
+
+            // remove any excess whitespace created by token removal
+            result = Regex.Replace(result, @"\s+", " ").Trim();
+
+            return result;
+        }
+
         public static string GetRelativeTimeDifference(DateTime date)
         {
             return GetRelativeTimeDifference(date, DateTime.Now);

@@ -29,7 +29,7 @@ namespace AssetInventory
         public DateTime purchaseDate;
         public DateTime firstRelease;
         public DateTime lastRelease;
-        public string assetRating;
+        public float assetRating;
         public int ratingCount;
         public float hotness;
         public float priceEur;

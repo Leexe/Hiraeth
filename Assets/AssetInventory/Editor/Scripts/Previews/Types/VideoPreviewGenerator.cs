@@ -24,8 +24,8 @@ namespace AssetInventory
             }
 
             // Create a new GameObject to hold the VideoPlayer
-            GameObject tempGO = new GameObject("TempVideoPlayer");
-            VideoPlayer videoPlayer = tempGO.AddComponent<VideoPlayer>();
+            GameObject tempGo = new GameObject("TempVideoPlayer");
+            VideoPlayer videoPlayer = tempGo.AddComponent<VideoPlayer>();
 
             // Configure the VideoPlayer
             videoPlayer.renderMode = VideoRenderMode.APIOnly; // Use APIOnly render mode
@@ -37,12 +37,12 @@ namespace AssetInventory
             videoPlayer.sendFrameReadyEvents = true;
 
             // Start the coroutine to handle the video processing
-            EditorCoroutineUtility.StartCoroutineOwnerless(ProcessVideoPlayer(videoPlayer, tempGO, size, frameCount, tcs, onSuccess));
+            EditorCoroutineUtility.StartCoroutineOwnerless(ProcessVideoPlayer(videoPlayer, tempGo, size, frameCount, tcs, onSuccess));
 
             return tcs.Task;
         }
 
-        private static IEnumerator ProcessVideoPlayer(VideoPlayer videoPlayer, GameObject tempGO, int size, int frameCount, TaskCompletionSource<Texture2D> tcs, Action<VideoClip> onSuccess = null)
+        private static IEnumerator ProcessVideoPlayer(VideoPlayer videoPlayer, GameObject tempGo, int size, int frameCount, TaskCompletionSource<Texture2D> tcs, Action<VideoClip> onSuccess = null)
         {
             // Prepare the video and wait until it's prepared
             bool isPrepared = false;
@@ -115,6 +115,7 @@ namespace AssetInventory
                     // Handle invalid dimensions
                     if (originalWidth == 0 || originalHeight == 0)
                     {
+                        Object.DestroyImmediate(texture);
                         Debug.LogError("VideoPlayer texture has invalid dimensions.");
                         continue;
                     }
@@ -143,6 +144,7 @@ namespace AssetInventory
                     frames.Add(frameTexture);
 
                     // Cleanup
+                    // Object.DestroyImmediate(texture); // TODO: will lead to Destroying object "TempBuffer 22 1920x1080" is not allowed at this time. 
                     RenderTexture.active = null;
                     RenderTexture.ReleaseTemporary(renderTexture);
 
@@ -171,14 +173,14 @@ namespace AssetInventory
                 onSuccess?.Invoke(videoPlayer.clip);
 
                 // Cleanup
-                Cleanup(videoPlayer, tempGO);
+                Cleanup(videoPlayer, tempGo, frames);
 
                 tcs.SetResult(textureSheet);
             }
             else
             {
                 // Cleanup
-                Cleanup(videoPlayer, tempGO);
+                Cleanup(videoPlayer, tempGo, frames);
                 tcs.SetResult(null);
                 Debug.LogError("No frames were captured.");
             }
@@ -212,7 +214,7 @@ namespace AssetInventory
             return textureSheet;
         }
 
-        private static void Cleanup(VideoPlayer videoPlayer, GameObject tempGO)
+        private static void Cleanup(VideoPlayer videoPlayer, GameObject tempGo, List<Texture2D> frames)
         {
             if (videoPlayer != null)
             {
@@ -220,9 +222,17 @@ namespace AssetInventory
                 Object.DestroyImmediate(videoPlayer);
             }
 
-            if (tempGO != null)
+            if (tempGo != null)
             {
-                Object.DestroyImmediate(tempGO);
+                Object.DestroyImmediate(tempGo);
+            }
+
+            if (frames != null)
+            {
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    Object.DestroyImmediate(frames[i]);
+                }
             }
         }
 

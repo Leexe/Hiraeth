@@ -28,14 +28,15 @@ namespace AssetInventory
         public static string GetPreviewWorkFolder()
         {
             string targetDir = Path.Combine(Application.dataPath, PREVIEW_FOLDER);
-            if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
+            Directory.CreateDirectory(targetDir);
 
             return targetDir;
         }
 
-        public static void RegisterPreviewRequest(int id, string sourceFile, string previewDestination, Action<PreviewRequest> onDone, bool useSourceDirectly = false)
+        public static bool RegisterPreviewRequest(int id, string sourceFile, string previewDestination, Action<PreviewRequest> onDone, bool useSourceDirectly = false)
         {
             PreviewRequest request = Localize(id, sourceFile, previewDestination, onDone, useSourceDirectly);
+            if (request == null) return false;
 
             // trigger creation, fetch later as it takes a while
             request.Obj = AssetDatabase.LoadAssetAtPath<Object>(request.TempFileRel);
@@ -48,7 +49,10 @@ namespace AssetInventory
             else
             {
                 Debug.LogError($"Queuing preview request failed for: {sourceFile}");
+                return false;
             }
+
+            return true;
         }
 
         public static PreviewRequest Localize(int id, string sourceFile, string previewDestination, Action<PreviewRequest> onDone = null, bool useSourceDirectly = false)
@@ -69,6 +73,8 @@ namespace AssetInventory
                 try
                 {
                     File.Copy(sourceFile, request.TempFile, true);
+                    string sourceFileMeta = sourceFile + ".meta";
+                    if (File.Exists(sourceFileMeta)) File.Copy(sourceFileMeta, request.TempFile + ".meta", true);
                 }
                 catch (Exception e)
                 {
@@ -89,7 +95,7 @@ namespace AssetInventory
 
             // ensure target folder exists for subsequent write operations
             string resultDir = Path.GetDirectoryName(request.DestinationFile);
-            if (!Directory.Exists(resultDir)) Directory.CreateDirectory(resultDir);
+            Directory.CreateDirectory(resultDir);
 
             return request;
         }

@@ -2,7 +2,7 @@
 <objects serializationModel="Studio.02.03.00">
 	<object class="AudioFile" id="{d2f26e74-cbbb-4210-9e2c-1986394e3b59}">
 		<property name="assetPath">
-			<value>Jump (Hireath).wav</value>
+			<value>Jump (Hiraeth).wav</value>
 		</property>
 		<property name="frequencyInKHz">
 			<value>44.0999985</value>

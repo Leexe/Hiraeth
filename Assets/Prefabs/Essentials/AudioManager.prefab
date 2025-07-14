@@ -1,0 +1,308 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &6929226443372460937
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7503112128506242905}
+  - component: {fileID: 7348217327653849791}
+  m_Layer: 0
+  m_Name: AudioManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7503112128506242905
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6929226443372460937}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 6746914566374873716}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &7348217327653849791
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6929226443372460937}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fd57e5fc62592164489b15ce052a14d3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!1 &8116424244034475386
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6746914566374873716}
+  - component: {fileID: 4630068123856352218}
+  m_Layer: 0
+  m_Name: FMODEvents
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6746914566374873716
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8116424244034475386}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 7503112128506242905}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &4630068123856352218
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8116424244034475386}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 17f1c7eb21b64bd45abcb07d27a0b585, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  <AirJump_sfx>k__BackingField:
+    Guid:
+      Data1: -698543721
+      Data2: 1112072971
+      Data3: -79308900
+      Data4: 666737014
+    Path: event:/Player/Air Jump
+  <AirDash_sfx>k__BackingField:
+    Guid:
+      Data1: -1314497463
+      Data2: 1216051076
+      Data3: 858275495
+      Data4: 21549488
+    Path: event:/Player/Dash
+  <GroundedDash_sfx>k__BackingField:
+    Guid:
+      Data1: -367074250
+      Data2: 1304577982
+      Data3: 1742543263
+      Data4: 1422167042
+    Path: event:/Player/Dash Roll
+  <DownwardsDash_sfx>k__BackingField:
+    Guid:
+      Data1: 837986184
+      Data2: 1318887825
+      Data3: -179255402
+      Data4: -488862374
+    Path: event:/Player/Fast Fall
+  <Jump_sfx>k__BackingField:
+    Guid:
+      Data1: -703889795
+      Data2: 1120670078
+      Data3: 1179216290
+      Data4: -510290775
+    Path: event:/Player/Jump
+  <Land_sfx>k__BackingField:
+    Guid:
+      Data1: -712597219
+      Data2: 1285844715
+      Data3: -553226102
+      Data4: 743955289
+    Path: event:/Player/Land
+  <Slide_sfx>k__BackingField:
+    Guid:
+      Data1: -1599568055
+      Data2: 1331268109
+      Data3: -1594904957
+      Data4: -409056947
+    Path: event:/Player/Slide
+  <GunShoot_sfx>k__BackingField:
+    Guid:
+      Data1: 1462189899
+      Data2: 1338040097
+      Data3: 944217742
+      Data4: -627391295
+    Path: event:/Player/Gun Shot
+  <Reload_sfx>k__BackingField:
+    Guid:
+      Data1: 1235530639
+      Data2: 1142035316
+      Data3: 1384152974
+      Data4: -1054805123
+    Path: event:/Player/Reload
+  <WallRun_sfx>k__BackingField:
+    Guid:
+      Data1: -609257680
+      Data2: 1225194232
+      Data3: -739050332
+      Data4: 121172385
+    Path: event:/Player/Wall Run
+  <WallJump_sfx>k__BackingField:
+    Guid:
+      Data1: 1479552404
+      Data2: 1109328594
+      Data3: -1384895090
+      Data4: -1266987729
+    Path: event:/Player/Wall Jump
+  <PlayerHurt_sfx>k__BackingField:
+    Guid:
+      Data1: 772416988
+      Data2: 1290759058
+      Data3: -1319630686
+      Data4: -1538869617
+    Path: event:/Player/Player Hurt
+  <EnemyDeath_sfx>k__BackingField:
+    Guid:
+      Data1: -1727607295
+      Data2: 1295905054
+      Data3: -408045133
+      Data4: -929532607
+    Path: event:/Enemy/Bacteriophage Deaths
+  <EnemyIdle_sfx>k__BackingField:
+    Guid:
+      Data1: -1867371778
+      Data2: 1255519018
+      Data3: 593399227
+      Data4: -3425113
+    Path: event:/Enemy/Bacteriophage Idle
+  <EnemyAttack_sfx>k__BackingField:
+    Guid:
+      Data1: -632060537
+      Data2: 1111785117
+      Data3: 262159785
+      Data4: -1482938149
+    Path: event:/Enemy/Bacteriophage Attack
+  <GameStartUp_sfx>k__BackingField:
+    Guid:
+      Data1: 1339883304
+      Data2: 1086348055
+      Data3: -100291428
+      Data4: -128114943
+    Path: event:/Game/Game Start-up
+  <Lose_sfx>k__BackingField:
+    Guid:
+      Data1: 47443419
+      Data2: 1256581898
+      Data3: -1630098535
+      Data4: -1431451842
+    Path: event:/Game/Lose 2
+  <LevelComplete_sfx>k__BackingField:
+    Guid:
+      Data1: -2098376170
+      Data2: 1193404947
+      Data3: 1144086943
+      Data4: 104832484
+    Path: event:/Game/Level Complete
+  <BouncePad_sfx>k__BackingField:
+    Guid:
+      Data1: -111570095
+      Data2: 1135984867
+      Data3: -258393978
+      Data4: -1650198639
+    Path: event:/Player/Jump Pad
+  <Parry_sfx>k__BackingField:
+    Guid:
+      Data1: -281785835
+      Data2: 1078211711
+      Data3: -1516926791
+      Data4: -1340241396
+    Path: event:/Player/Parry Sound
+  <MasterVolume_sfx>k__BackingField:
+    Guid:
+      Data1: -1380897036
+      Data2: 1166306023
+      Data3: -918380130
+      Data4: -805172060
+    Path: event:/Game/MasterSoundTest
+  <GameVolume_sfx>k__BackingField:
+    Guid:
+      Data1: -1450573258
+      Data2: 1217667698
+      Data3: 2001264771
+      Data4: -855589200
+    Path: event:/Game/GameSoundTest
+  <MusicVolume_sfx>k__BackingField:
+    Guid:
+      Data1: -1361435046
+      Data2: 1319851755
+      Data3: 1096247445
+      Data4: -2144100296
+    Path: event:/Game/MusicSoundTest
+  <Pause_sfx>k__BackingField:
+    Guid:
+      Data1: -1297036202
+      Data2: 1150921414
+      Data3: 15766965
+      Data4: 2098309210
+    Path: event:/Game/Pause
+  <Unpause_sfx>k__BackingField:
+    Guid:
+      Data1: -1799698089
+      Data2: 1088231513
+      Data3: 1016691841
+      Data4: 1259125765
+    Path: event:/Game/Unpause
+  <PauseClick_sfx>k__BackingField:
+    Guid:
+      Data1: 704855981
+      Data2: 1309855060
+      Data3: -3362428
+      Data4: 1071092888
+    Path: event:/Game/Pause Click
+  <PauseHover_sfx>k__BackingField:
+    Guid:
+      Data1: -1350281303
+      Data2: 1216836800
+      Data3: -2124207710
+      Data4: -528739127
+    Path: event:/Game/Pause Hovers
+  <HiraethAmbient>k__BackingField:
+    Guid:
+      Data1: -1716403717
+      Data2: 1101809525
+      Data3: -1438653788
+      Data4: 226980659
+    Path: event:/Music/Hireath Ambient
+  <HiraethTrack2>k__BackingField:
+    Guid:
+      Data1: 391260114
+      Data2: 1211204792
+      Data3: -1822966130
+      Data4: -1253740788
+    Path: event:/Music/Hiraeth Song 2
+  <HiraethTrack3>k__BackingField:
+    Guid:
+      Data1: 1902420531
+      Data2: 1103227178
+      Data3: -359732062
+      Data4: -953781400
+    Path: event:/Music/Hiraeth Song 3
+  <HiraethTrack4>k__BackingField:
+    Guid:
+      Data1: -1724743529
+      Data2: 1096946282
+      Data3: -15277439
+      Data4: 829827883
+    Path: event:/Music/Hiraeth Song 4

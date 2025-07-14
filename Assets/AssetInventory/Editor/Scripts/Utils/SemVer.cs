@@ -122,6 +122,16 @@ namespace AssetInventory
             }
         }
 
+        public SemVer WithOnlyMinor()
+        {
+            return new SemVer($"{Major}.{Minor}");
+        }
+
+        public SemVer WithPatch(int patch)
+        {
+            return new SemVer($"{Major}.{Minor}.{Micro}.{patch}");
+        }
+
         public static bool operator ==(SemVer version1, SemVer version2)
         {
             return version1?._originalVersion == version2?._originalVersion;

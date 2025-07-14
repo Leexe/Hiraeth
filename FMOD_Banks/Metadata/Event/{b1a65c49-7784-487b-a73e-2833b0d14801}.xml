@@ -2,13 +2,13 @@
 <objects serializationModel="Studio.02.03.00">
 	<object class="Event" id="{b1a65c49-7784-487b-a73e-2833b0d14801}">
 		<property name="name">
-			<value>Dash (Hireath)</value>
+			<value>Dash</value>
 		</property>
 		<property name="outputFormat">
 			<value>1</value>
 		</property>
 		<relationship name="folder">
-			<destination>{04a6e5cf-98df-4465-9e4c-8121928012eb}</destination>
+			<destination>{499b7ac4-09ae-4217-870a-0a270c8e23dd}</destination>
 		</relationship>
 		<relationship name="mixer">
 			<destination>{1639a6e4-9a64-4ab1-8662-6c9fe1fda140}</destination>
@@ -56,7 +56,7 @@
 			<destination>{b7022d57-ee4e-4dc3-be68-806d7850ec27}</destination>
 		</relationship>
 		<relationship name="output">
-			<destination>{054981bc-4193-4069-ad6b-44f061e7560c}</destination>
+			<destination>{c7feec53-90ac-44e3-96e5-84f9b843aea1}</destination>
 		</relationship>
 	</object>
 	<object class="EventAutomatableProperties" id="{94d038fe-6d35-457c-ab7b-e42946f6d53a}" />
@@ -72,9 +72,6 @@
 		</relationship>
 	</object>
 	<object class="EventMixerMaster" id="{35835d20-8944-4c1d-babd-a0d95c60cb02}">
-		<property name="volume">
-			<value>-7.5</value>
-		</property>
 		<relationship name="modulators">
 			<destination>{f2580f25-a11a-4337-a6c8-70bd64886ad6}</destination>
 		</relationship>
@@ -113,6 +110,7 @@
 	<object class="MixerBusEffectChain" id="{f0edfe34-b43f-4ae8-8dc2-0469ab6003c1}">
 		<relationship name="effects">
 			<destination>{b86367f4-ffda-41db-9f0c-2d2a15143717}</destination>
+			<destination>{dfd4f662-3f5f-4e63-99b5-71447d3abfe4}</destination>
 		</relationship>
 	</object>
 	<object class="MixerBusPanner" id="{192f08d3-6a12-4210-8de3-a046e92d8c06}" />
@@ -123,4 +121,15 @@
 	</object>
 	<object class="MixerBusFader" id="{45756ba5-8262-4921-887d-c1fd4bae82a7}" />
 	<object class="MixerBusFader" id="{b86367f4-ffda-41db-9f0c-2d2a15143717}" />
+	<object class="MixerSend" id="{dfd4f662-3f5f-4e63-99b5-71447d3abfe4}">
+		<property name="level">
+			<value>-16</value>
+		</property>
+		<property name="inputFormat">
+			<value>1</value>
+		</property>
+		<relationship name="mixerReturn">
+			<destination>{cc03a880-37a3-4afc-8ea5-c742c1f1beeb}</destination>
+		</relationship>
+	</object>
 </objects>

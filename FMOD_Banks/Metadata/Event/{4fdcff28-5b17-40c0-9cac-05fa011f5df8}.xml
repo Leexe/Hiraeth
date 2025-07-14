@@ -2,13 +2,13 @@
 <objects serializationModel="Studio.02.03.00">
 	<object class="Event" id="{4fdcff28-5b17-40c0-9cac-05fa011f5df8}">
 		<property name="name">
-			<value>Hireath Victory</value>
+			<value>Game Start-up</value>
 		</property>
 		<property name="outputFormat">
 			<value>1</value>
 		</property>
 		<relationship name="folder">
-			<destination>{04a6e5cf-98df-4465-9e4c-8121928012eb}</destination>
+			<destination>{5d5c9d53-92b6-4f4a-92f1-bef106ce792b}</destination>
 		</relationship>
 		<relationship name="mixer">
 			<destination>{8f44c415-43b7-4bb9-8022-ee2e2eed1b7a}</destination>
@@ -56,7 +56,7 @@
 			<destination>{01aa5cf9-1530-4511-bcd6-caa47a42d3fd}</destination>
 		</relationship>
 		<relationship name="output">
-			<destination>{054981bc-4193-4069-ad6b-44f061e7560c}</destination>
+			<destination>{c7feec53-90ac-44e3-96e5-84f9b843aea1}</destination>
 		</relationship>
 	</object>
 	<object class="EventAutomatableProperties" id="{a6721eef-02f6-4fe9-b76b-a850005e1c55}" />
@@ -72,9 +72,6 @@
 		</relationship>
 	</object>
 	<object class="EventMixerMaster" id="{c7fb50c9-b709-447e-afb0-e537ce9ae891}">
-		<property name="volume">
-			<value>-13</value>
-		</property>
 		<relationship name="effectChain">
 			<destination>{048d3e10-357b-4456-bfb1-133baab6782e}</destination>
 		</relationship>

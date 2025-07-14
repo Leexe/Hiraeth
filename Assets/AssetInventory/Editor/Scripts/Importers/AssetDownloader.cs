@@ -34,7 +34,7 @@ namespace AssetInventory
 
         public AssetDownloader(AssetInfo asset)
         {
-            _asset = asset;
+            _asset = asset.GetRoot();
             AssetDownloaderUtils.OnDownloadFinished += OnDownloadFinished;
         }
 
@@ -45,7 +45,7 @@ namespace AssetInventory
 
         public void SetAsset(AssetInfo asset)
         {
-            _asset = asset;
+            _asset = asset.GetRoot();
         }
 
         private void OnDownloadFinished(int foreignId)
@@ -209,6 +209,7 @@ namespace AssetInventory
 
         public void Download()
         {
+            if (_asset.ParentId > 0) return; // safety check as this might otherwise lead to cache duplications
             if (!IsDownloadSupported()) return;
 
             Assembly assembly = Assembly.Load("UnityEditor.CoreModule");

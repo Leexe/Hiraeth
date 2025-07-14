@@ -53,9 +53,11 @@ namespace AssetInventory
                 foreach (T info in data)
                 {
                     if (!info.HasChildren) continue;
-                    if (info.Children[0].HasChildren) continue;
+                    if (info is AssetInfo assetInfo && assetInfo.AssetId > 0) continue; // don't consider packages with sub-packages folders
 
                     // cater for cases where there are no subfolders, faster than scanning upfront
+                    if (info.Children[0].HasChildren) continue;
+
                     int firstId = info.Children[0].TreeId;
 
                     do
@@ -63,7 +65,8 @@ namespace AssetInventory
                         TreeElement temp = info.Children[0];
                         info.Children.RemoveAt(0);
                         info.Children.Add(temp);
-                    } while (!info.Children[0].HasChildren && info.Children[0].TreeId != firstId);
+                    } while ((!info.Children[0].HasChildren || info.Children[0] is AssetInfo assetInfo2 && assetInfo2.AssetId > 0)
+                             && info.Children[0].TreeId != firstId);
                 }
             }
 

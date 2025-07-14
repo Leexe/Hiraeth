@@ -11,56 +11,49 @@ namespace AssetInventory
     {
         private const int BREAK_INTERVAL = 30;
 
-        public async Task Index(FolderSpec spec)
+        public async Task Run(FolderSpec spec)
         {
-            ResetState(false);
-
             if (string.IsNullOrEmpty(spec.location)) return;
 
             string[] files = IOUtils.GetFiles(spec.GetLocation(true), new[] {"*.zip", "*.rar", "*.7z"}, SearchOption.AllDirectories).ToArray();
 
             MainCount = files.Length;
-            MainProgress = 1; // small hack to trigger UI update in the end
-
-            int progressId = MetaProgress.Start("Updating archives index");
             for (int i = 0; i < files.Length; i++)
             {
                 if (CancellationRequested) break;
                 if (i % BREAK_INTERVAL == 0) await Task.Yield(); // let editor breath in case many files are already indexed
-                await Cooldown.Do();
+                await AI.Cooldown.Do();
 
                 string package = files[i];
                 if (IsIgnoredPath(package)) continue;
 
+                // check for multipart archives and skip if not the first part
+                // zip will have zip.001, rar will have .r00, .r01, .r02, etc. but can also have .part1.rar, .part2.rar, etc.
+                if (!IOUtils.IsFirstArchiveVolume(package)) continue;
+
                 Asset asset = HandlePackage(package);
                 if (asset == null) continue;
 
-                MetaProgress.Report(progressId, i + 1, files.Length, package);
-                MainCount = files.Length;
-                CurrentMain = package + " (" + EditorUtility.FormatBytes(asset.PackageSize) + ")";
-                MainProgress = i + 1;
+                SetProgress(package + " (" + EditorUtility.FormatBytes(asset.PackageSize) + ")", i + 1);
 
                 await Task.Yield();
                 await IndexPackage(asset, spec);
                 await Task.Yield();
 
-                if (CancellationRequested) break;
+                if (CancellationRequested) break; // don't store tags on cancellation
 
                 if (spec.assignTag && !string.IsNullOrWhiteSpace(spec.tag))
                 {
-                    Tagging.AddTagAssignment(new AssetInfo(asset), spec.tag, TagAssignment.Target.Package);
+                    Tagging.AddAssignment(new AssetInfo(asset), spec.tag, TagAssignment.Target.Package);
                 }
             }
-            MetaProgress.Remove(progressId);
-            ResetState(true);
         }
 
-        private static Asset HandlePackage(string package, Asset parent = null, AssetFile subPackage = null)
+        private Asset HandlePackage(string package, Asset parent = null, AssetFile subPackage = null)
         {
             Asset asset = new Asset();
             if (parent == null)
             {
-                asset.SafeName = Path.GetFileNameWithoutExtension(package);
                 asset.SetLocation(AI.MakeRelative(package));
             }
             else
@@ -69,12 +62,15 @@ namespace AssetInventory
                 asset.CopyFrom(parent);
                 asset.ForeignId = 0; // will otherwise override metadata when syncing with store
                 asset.ParentId = parent.Id;
-                asset.SafeName = Path.GetFileNameWithoutExtension(package);
 
                 string relPackage = $"{parent.Location}{Asset.SUB_PATH}{subPackage.Path}";
                 asset.SetLocation(relPackage);
             }
+            asset.SafeName = Path.GetFileNameWithoutExtension(package);
             asset.DisplayName = StringUtils.CamelCaseToWords(asset.SafeName.Replace("_", " ")).Trim();
+
+            // remove left-overs from multi-part archives
+            if (asset.DisplayName.ToLowerInvariant().EndsWith(".part1")) asset.DisplayName = asset.DisplayName.Substring(0, asset.DisplayName.Length - 6);
             asset.AssetSource = Asset.Source.Archive;
 
             Asset existing = DBAdapter.DB.Table<Asset>().FirstOrDefault(a => a.Location == asset.Location);
@@ -106,19 +102,12 @@ namespace AssetInventory
 
         public async Task IndexDetails(Asset asset)
         {
-            ResetState(false);
-
-            MainCount = 1;
-            CurrentMain = "Indexing archive";
-
             FolderSpec importSpec = GetDefaultImportSpec();
             importSpec.createPreviews = true; // TODO: derive from additional folder settings
             await IndexPackage(asset, importSpec);
-
-            ResetState(true);
         }
 
-        private static async Task IndexPackage(Asset asset, FolderSpec spec)
+        private async Task IndexPackage(Asset asset, FolderSpec spec)
         {
             await RemovePersistentCacheEntry(asset);
             string tempPath = await AI.ExtractAsset(asset);
@@ -131,25 +120,29 @@ namespace AssetInventory
             FolderSpec importSpec = GetDefaultImportSpec();
             importSpec.location = IOUtils.ToShortPath(tempPath);
             importSpec.createPreviews = spec.createPreviews;
-            await new MediaImporter().Index(importSpec, asset, true, true);
+
+            MediaImporter mediaImporter = new MediaImporter();
+            AI.Actions.RegisterRunningAction(ActionHandler.ACTION_MEDIA_FOLDERS_INDEX, mediaImporter, "Updating media folder index");
+            await mediaImporter.Index(importSpec, asset, true, true);
+            mediaImporter.FinishProgress();
+
             RemoveWorkFolder(asset, tempPath);
 
             MarkDone(asset);
         }
 
-        public static async Task ProcessSubArchives(Asset asset, List<AssetFile> subArchives)
+        public async Task ProcessSubArchives(Asset asset, List<AssetFile> subArchives)
         {
             // index sub-packages while extracted
             if (AI.Config.indexSubPackages && subArchives.Count > 0)
             {
-                int subProgressId2 = MetaProgress.Start("Indexing sub-archives");
+                CurrentMain = "Indexing sub-archives";
+                MainCount = subArchives.Count;
                 for (int i = 0; i < subArchives.Count; i++)
                 {
                     if (CancellationRequested) break;
 
-                    CurrentMain = "Indexing sub-archives";
-                    MainCount = subArchives.Count;
-                    MainProgress = i + 1;
+                    SetProgress(subArchives[i].FileName, i + 1);
 
                     AssetFile subArchive = subArchives[i];
                     string path = await AI.EnsureMaterializedAsset(asset, subArchive);
@@ -169,7 +162,6 @@ namespace AssetInventory
                     subAsset.CurrentState = Asset.State.Done;
                     Persist(subAsset);
                 }
-                MetaProgress.Remove(subProgressId2);
             }
         }
     }

@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace AssetInventory
 {
-    public sealed class AssetBackup : AssetProgress
+    public sealed class AssetBackup : ActionProgress
     {
         private const string SEPARATOR = "-~-";
 
@@ -45,19 +45,15 @@ namespace AssetInventory
             }
         }
 
-        public async Task Sync()
+        public async Task Run()
         {
-            ResetState(false);
-
             await Backup();
             ClearOut();
-
-            ResetState(true);
         }
 
         public async Task Backup(int assetId = -1)
         {
-            int progressId = MetaProgress.Start("Backing up assets");
+            Refresh();
 
             string backupFolder = AI.GetBackupFolder();
             List<Asset> assets = DBAdapter.DB.Table<Asset>()
@@ -69,17 +65,23 @@ namespace AssetInventory
             for (int i = 0; i < assets.Count; i++)
             {
                 if (CancellationRequested) break;
-                await Cooldown.Do();
+                await AI.Cooldown.Do();
 
                 Asset asset = assets[i];
-                MetaProgress.Report(progressId, i + 1, assets.Count, asset.SafeName);
+                MetaProgress.Report(ProgressId, i + 1, assets.Count, asset.SafeName);
 
                 if (!File.Exists(asset.GetLocation(true))) continue;
 
-                string targetFile = Path.Combine(backupFolder, $"{asset.ForeignId}{SEPARATOR}{asset.GetSafeVersion()}{SEPARATOR}{asset.SafeName}.unitypackage");
+                string targetFile = null;
+                if (_assetVersions.TryGetValue(asset.ForeignId, out List<BackupInfo> backupInfos))
+                {
+                    BackupInfo bi = backupInfos.FirstOrDefault(b => b.version == asset.GetSafeVersion());
+                    if (bi != null) targetFile = bi.location;
+                }
+                if (targetFile == null) targetFile = Path.Combine(backupFolder, $"{asset.ForeignId}{SEPARATOR}{asset.GetSafeVersion()}{SEPARATOR}{asset.SafeName}.unitypackage");
                 if (!File.Exists(targetFile))
                 {
-                    CurrentMain = $"Backing up {asset.SafeName} ({EditorUtility.FormatBytes(asset.PackageSize)})";
+                    CurrentMain = $"{asset.SafeName} ({EditorUtility.FormatBytes(asset.PackageSize)})";
                     MainProgress = i + 1;
 
                     try
@@ -94,7 +96,6 @@ namespace AssetInventory
                 }
             }
             Refresh();
-            MetaProgress.Remove(progressId);
         }
 
         private void ClearOut()

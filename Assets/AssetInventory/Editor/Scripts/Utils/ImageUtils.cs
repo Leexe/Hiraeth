@@ -5,12 +5,12 @@ using System.Collections.Generic;
 using System.IO;
 #if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using Graphics = System.Drawing.Graphics;
 #endif
 using System.Linq;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
 using Color = UnityEngine.Color;
 
 namespace AssetInventory
@@ -120,19 +120,20 @@ namespace AssetInventory
 
         public static float GetHue(Texture2D source)
         {
-            if (source == null) return -1;
+            if (source == null) return -1f;
 
             Color32[] texColors = source.GetPixels32();
             int total = texColors.Length;
-            float r = 0;
-            float g = 0;
-            float b = 0;
-            float count = 0;
+            int r = 0;
+            int g = 0;
+            int b = 0;
+            int count = 0;
+            byte alphaThreshold = (byte)(0.25f * 255);
 
             for (int i = 0; i < total; i++)
             {
                 Color32 pixelColor = texColors[i];
-                if (pixelColor.a > .25f)
+                if (pixelColor.a > alphaThreshold)
                 {
                     count++;
                     r += pixelColor.r;
@@ -140,7 +141,14 @@ namespace AssetInventory
                     b += pixelColor.b;
                 }
             }
-            return RGBToHue(r / 256f / count, g / 256f / count, b / 256f / count);
+            if (count == 0) return -1f;
+
+            float inverseCount255 = 1f / (count * 255f);
+            float avgR = r * inverseCount255;
+            float avgG = g * inverseCount255;
+            float avgB = b * inverseCount255;
+
+            return RGBToHue(avgR, avgG, avgB);
         }
 
         public static float ToHue(this Color color) => RGBToHue(color.r, color.g, color.b);
@@ -150,8 +158,8 @@ namespace AssetInventory
         {
             float min = Mathf.Min(Mathf.Min(r, g), b);
             float max = Mathf.Max(Mathf.Max(r, g), b);
-            if (min == max) return 0;
             float delta = max - min;
+            if (delta == 0) return 0;
 
             float hue = 0;
             if (r == max)
@@ -160,15 +168,15 @@ namespace AssetInventory
             }
             else if (g == max)
             {
-                hue = 2 + (b - r) / delta;
+                hue = (b - r) / delta + 2f;
             }
             else if (b == max)
             {
-                hue = 4 + (r - g) / delta;
+                hue = (r - g) / delta + 4f;
             }
-            hue *= 60;
+            hue *= 60f;
 
-            if (hue < 0.0f) hue += 360;
+            if (hue < 0.0f) hue += 360f;
 
             return hue;
         }
@@ -188,27 +196,74 @@ namespace AssetInventory
             return texture;
         }
 
-        public static Tuple<int, int> GetDimensions(string file, bool ignoreErrors = false)
+        public static Tuple<int, int> GetDimensions(string file, bool ignoreErrors = false, string extOverride = null)
         {
-            #if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
-            Image originalImage; // leave here as otherwise temp files will be created by FromFile() for yet unknown reasons 
-            #endif
             try
             {
-                #if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
-                using (originalImage = Image.FromFile(IOUtils.ToLongPath(file)))
+                string path = IOUtils.ToLongPath(file);
+#if UNITY_2021_2_OR_NEWER
+                string ext = extOverride != null ? extOverride : Path.GetExtension(file).ToLowerInvariant();
+                if (ext == ".png")
                 {
-                    return new Tuple<int, int>(originalImage.Width, originalImage.Height);
+                    using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+                    {
+                        // PNG header: 8 bytes signature, 4 bytes length, 4 bytes "IHDR"
+                        // Then the IHDR chunk: width (4 bytes, big-endian) and height (4 bytes, big-endian)
+                        fs.Position = 16;
+                        Span<byte> buffer = stackalloc byte[8];
+                        if (fs.Read(buffer) == 8)
+                        {
+                            int width = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
+                            int height = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
+                            return Tuple.Create(width, height);
+                        }
+                    }
                 }
-                #else
+                else if (ext == ".jpg" || ext == ".jpeg")
+                {
+                    using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+                    {
+                        // Validate JPEG SOI marker (0xFFD8)
+                        if (fs.ReadByte() != 0xFF || fs.ReadByte() != 0xD8)
+                        {
+                            Debug.LogWarning($"Not a valid JPEG file: {file}. Trying fallback.");
+                        }
+                        else
+                        {
+                            while (fs.Position < fs.Length)
+                            {
+                                if (fs.ReadByte() != 0xFF) break;
+                                int marker = fs.ReadByte();
+                                int length = (fs.ReadByte() << 8) | fs.ReadByte();
+                                // SOF markers: 0xC0 to 0xC3
+                                if (marker >= 0xC0 && marker <= 0xC3)
+                                {
+                                    fs.ReadByte(); // sample precision
+                                    int height = (fs.ReadByte() << 8) | fs.ReadByte();
+                                    int width = (fs.ReadByte() << 8) | fs.ReadByte();
+                                    return Tuple.Create(width, height);
+                                }
+                                fs.Position += length - 2;
+                            }
+                        }
+                    }
+                }
+#endif
+                // Fallback to full image loading
+#if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
+                using (Image originalImage = Image.FromFile(path))
+                {
+                    return Tuple.Create(originalImage.Width, originalImage.Height);
+                }
+#else
                 Texture2D tmpTexture = new Texture2D(1, 1);
-                byte[] assetContent = File.ReadAllBytes(file);
+                byte[] assetContent = File.ReadAllBytes(path);
                 if (tmpTexture.LoadImage(assetContent))
                 {
-                    return new Tuple<int, int>(tmpTexture.width, tmpTexture.height);
+                    return Tuple.Create(tmpTexture.width, tmpTexture.height);
                 }
                 return null;
-                #endif
+#endif
             }
             catch (Exception e)
             {
@@ -220,7 +275,7 @@ namespace AssetInventory
             }
         }
 
-        #if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
+#if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
         public static bool ResizeImage(string originalFile, string outputFile, int maxSize, bool scaleBeyondSize = true, ImageFormat format = null)
         {
             Image originalImage; // leave here as otherwise temp files will be created by FromFile() for yet unknown reasons 
@@ -236,8 +291,8 @@ namespace AssetInventory
                     double ratioY = (double)maxSize / originalHeight;
                     double ratio = Math.Min(ratioX, ratioY);
 
-                    int newWidth = Mathf.Max(1, (int)(originalWidth * ratio));
-                    int newHeight = Mathf.Max(1, (int)(originalHeight * ratio));
+                    int newWidth = Math.Max(1, (int)(originalWidth * ratio));
+                    int newHeight = Math.Max(1, (int)(originalHeight * ratio));
 
                     if (!scaleBeyondSize && (newWidth > originalWidth || newHeight > originalHeight))
                     {
@@ -250,15 +305,16 @@ namespace AssetInventory
                     {
                         using (Graphics graphics = Graphics.FromImage(newImage))
                         {
-                            graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
-                            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                            graphics.CompositingQuality = CompositingQuality.HighQuality;
+                            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                            graphics.SmoothingMode = SmoothingMode.HighQuality;
+                            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
                             graphics.DrawImage(originalImage, 0, 0, newWidth, newHeight);
                         }
 
                         // Save the resized image
                         string dir = Path.GetDirectoryName(outputFile);
-                        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                        Directory.CreateDirectory(dir);
                         newImage.Save(IOUtils.ToLongPath(outputFile), format != null ? format : ImageFormat.Png); // Adjust the format based on your needs
                     }
                 }
@@ -273,7 +329,7 @@ namespace AssetInventory
             }
             return true;
         }
-        #endif
+#endif
 
         public static Texture2D Resize(this Texture2D source, int size)
         {

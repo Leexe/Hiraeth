@@ -3,8 +3,8 @@ guid: 8d5a3d6be96644378d635366c9819b42
 timeCreated: 1728887250
 AssetOrigin:
   serializedVersion: 1
-  productId: 275893
-  packageName: Asset Inventory 2
-  packageVersion: 2.7.0
+  productId: 308224
+  packageName: Asset Inventory 3
+  packageVersion: 3.0
   assetPath: Assets/AssetInventory/Editor/Scripts/Previews/Types/VideoPreviewGenerator.cs
-  uploadId: 704734
+  uploadId: 755862

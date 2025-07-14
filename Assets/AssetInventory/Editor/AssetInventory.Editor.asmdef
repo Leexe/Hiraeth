@@ -33,13 +33,23 @@
         },
         {
             "name": "com.unity.cloud.assets",
-            "expression": "1.4.0",
+            "expression": "1.5.0",
             "define": "USE_ASSET_MANAGER"
         },
         {
             "name": "com.unity.cloud.identity",
             "expression": "1.3.0",
             "define": "USE_CLOUD_IDENTITY"
+        },
+        {
+            "name": "com.unity.vectorgraphics",
+            "expression": "",
+            "define": "USE_VECTOR_GRAPHICS"
+        },
+        {
+            "name": "com.unity.learn.iet-framework",
+            "expression": "4.1.3",
+            "define": "USE_TUTORIALS"
         }
     ],
     "noEngineReferences": false

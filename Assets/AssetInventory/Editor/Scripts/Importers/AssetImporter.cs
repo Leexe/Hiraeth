@@ -9,11 +9,11 @@ using UnityEngine;
 
 namespace AssetInventory
 {
-    public abstract class AssetImporter : AssetProgress
+    public abstract class AssetImporter : ActionProgress
     {
         protected static bool IsIgnoredPath(string path)
         {
-            // skip macosx resource fork folders, git folders
+            // skip MacOS resource fork folders, git folders
             return path.Contains("__MACOSX") || path.Contains(".git/") || path.Contains(".git\\");
         }
 
@@ -43,7 +43,7 @@ namespace AssetInventory
             DBAdapter.DB.Execute("update Asset set CurrentState=? where Id=?", asset.CurrentState, asset.Id);
         }
 
-        protected static void ApplyOverrides(Asset asset)
+        internal static void ApplyOverrides(Asset asset)
         {
             string overFile = asset.GetLocation(true) + ".overrides.json";
             if (File.Exists(overFile))
@@ -73,7 +73,7 @@ namespace AssetInventory
                         if (overrides.purchaseDate != default(DateTime)) asset.PurchaseDate = overrides.purchaseDate;
                         if (overrides.firstRelease != default(DateTime)) asset.FirstRelease = overrides.firstRelease;
                         if (overrides.lastRelease != default(DateTime)) asset.LastRelease = overrides.lastRelease;
-                        if (!string.IsNullOrWhiteSpace(overrides.assetRating)) asset.AssetRating = overrides.assetRating;
+                        if (overrides.assetRating > 0) asset.AssetRating = overrides.assetRating;
                         if (overrides.ratingCount > 0) asset.RatingCount = overrides.ratingCount;
                         if (overrides.hotness > 0) asset.Hotness = overrides.hotness;
                         if (overrides.priceEur > 0) asset.PriceEur = overrides.priceEur;
@@ -94,7 +94,7 @@ namespace AssetInventory
                         {
                             foreach (string tag in overrides.tags)
                             {
-                                Tagging.AddTagAssignment(new AssetInfo(asset), tag, TagAssignment.Target.Package);
+                                Tagging.AddAssignment(new AssetInfo(asset), tag, TagAssignment.Target.Package);
                             }
                         }
 
@@ -263,11 +263,11 @@ namespace AssetInventory
             string previewFile = file.GetPreviewFile(previewFolder);
             if (!File.Exists(previewFile))
             {
-                if (file.PreviewState != AssetFile.PreviewOptions.Redo)
+                if (file.PreviewState != AssetFile.PreviewOptions.Redo && file.PreviewState != AssetFile.PreviewOptions.RedoMissing)
                 {
                     Debug.LogWarning($"Preview file for '{file}' does not exist anymore. Scheduling it for recreation.");
-                    DBAdapter.DB.Execute("update AssetFile set PreviewState=? where Id=?", AssetFile.PreviewOptions.Redo, file.Id);
-                    file.PreviewState = AssetFile.PreviewOptions.Redo;
+                    DBAdapter.DB.Execute("update AssetFile set PreviewState=? where Id=?", AssetFile.PreviewOptions.RedoMissing, file.Id);
+                    file.PreviewState = AssetFile.PreviewOptions.RedoMissing;
                 }
                 if (nullOnError) return null;
             }
@@ -315,7 +315,7 @@ namespace AssetInventory
             if (info.Type == "png" || info.Type == "jpg")
             #endif
             {
-                Tuple<int, int> dimensions = ImageUtils.GetDimensions(file);
+                Tuple<int, int> dimensions = ImageUtils.GetDimensions(file, false, "." + info.Type);
                 if (dimensions != null)
                 {
                     info.Width = dimensions.Item1;
@@ -323,7 +323,7 @@ namespace AssetInventory
                 }
             }
 
-            if (AI.IsFileType(info.FileName, "Audio"))
+            if (AI.IsFileType(info.FileName, AI.AssetGroup.Audio))
             {
                 string contentFile = asset.AssetSource != Asset.Source.Directory ? await AI.EnsureMaterializedAsset(asset, info) : file;
                 try

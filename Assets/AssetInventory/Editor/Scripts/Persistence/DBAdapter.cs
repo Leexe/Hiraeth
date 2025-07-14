@@ -29,13 +29,19 @@ namespace AssetInventory
             //_db.Trace = true;
             //_db.Tracer += s => Debug.Log(s);
 
-            _db.ExecuteScalar<string>("PRAGMA journal_mode=" + AI.Config.dbJournalMode);
-            _db.Execute("PRAGMA case_sensitive_like = false");
+            _db.ExecuteScalar<string>($"PRAGMA journal_mode={AI.Config.dbJournalMode};");
+            _db.Execute("PRAGMA synchronous = NORMAL;");
+            _db.Execute("PRAGMA case_sensitive_like = false;");
+            _db.Execute("PRAGMA cache_size = 100000;");
 
             _db.CreateTable<Asset>();
             _db.CreateTable<AssetFile>();
             _db.CreateTable<AssetMedia>();
             _db.CreateTable<AppProperty>();
+            _db.CreateTable<CustomAction>();
+            _db.CreateTable<CustomActionStep>();
+            _db.CreateTable<MetadataDefinition>();
+            _db.CreateTable<MetadataAssignment>();
             _db.CreateTable<Tag>();
             _db.CreateTable<TagAssignment>();
             _db.CreateTable<RelativeLocation>();

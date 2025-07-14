@@ -18,20 +18,22 @@ namespace AssetInventory
         public override async Task Validate()
         {
             CurrentState = State.Scanning;
-            FileIssues = await GatherOrphanedPreviewFolders();
+            FileIssues = await GatherOrphanedFolders();
             CurrentState = State.Completed;
         }
 
         public override async Task Fix()
         {
             CurrentState = State.Fixing;
-            await RemoveOrphanedPreviewFolders(FileIssues);
+            await RemoveOrphanedFolders(FileIssues);
             await Validate();
         }
 
-        private static async Task<List<string>> GatherOrphanedPreviewFolders()
+        private static async Task<List<string>> GatherOrphanedFolders()
         {
             List<string> result = new List<string>();
+            if (!Directory.Exists(AI.GetPreviewFolder())) return result;
+
             string[] folders = Directory.GetDirectories(AI.GetPreviewFolder());
 
             // gather existing assets for faster processing
@@ -62,7 +64,7 @@ namespace AssetInventory
             return result;
         }
 
-        private static async Task RemoveOrphanedPreviewFolders(List<string> folders)
+        private static async Task RemoveOrphanedFolders(List<string> folders)
         {
             int progress = 0;
             int count = folders.Count;

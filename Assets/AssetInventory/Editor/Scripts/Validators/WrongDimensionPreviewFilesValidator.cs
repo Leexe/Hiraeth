@@ -43,9 +43,10 @@ namespace AssetInventory
 
             // check if original file is actually larger than requested preview size before doing any expensive file system checks
             // this check will for performance reasons not cater for the case when requested preview is e.g. 512, source file is 256 and preview is 128 where the preview could at least be doubled 
-            string typeStr = string.Join("\",\"", AI.TypeGroups["Images"]);
+            int previewSize = AI.Config.upscaleSize;
+            string typeStr = string.Join("\",\"", AI.TypeGroups[AI.AssetGroup.Images]);
             string query = "select * from AssetFile where (PreviewState = ? or PreviewState = ?) and Type in (\"" + typeStr + "\") and (Width >= ? or Height >= ?)";
-            List<AssetInfo> files = DBAdapter.DB.Query<AssetInfo>(query, AssetFile.PreviewOptions.Provided, AssetFile.PreviewOptions.Custom, AI.Config.upscaleSize, AI.Config.upscaleSize).ToList();
+            List<AssetInfo> files = DBAdapter.DB.Query<AssetInfo>(query, AssetFile.PreviewOptions.Provided, AssetFile.PreviewOptions.Custom, previewSize, previewSize).ToList();
             string previewFolder = AI.GetPreviewFolder();
 
             int progress = 0;
@@ -65,7 +66,7 @@ namespace AssetInventory
                 if (dimensions == null || dimensions.Item1 <= 0 || dimensions.Item2 <= 0) continue;
 
                 // one dimension must fit
-                if (dimensions.Item1 != AI.Config.upscaleSize && dimensions.Item2 != AI.Config.upscaleSize)
+                if (dimensions.Item1 != previewSize && dimensions.Item2 != previewSize)
                 {
                     result.Add(file);
                 }

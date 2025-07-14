@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 #if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
 using System.Drawing.Imaging;
@@ -17,20 +16,23 @@ namespace AssetInventory
     public sealed class UnityPackageImporter : AssetImporter
     {
         private static readonly Regex CamelCaseRegex = new Regex("([a-z])([A-Z])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex SyntyNameRegex = new Regex(
+            @"^(?<group>[^_]+)_(?<name>.+?)(?=_Unity_)_Unity_(?<minVersion>\d+_\d+(?:_\d+)?)_v(?<version>\d+_\d+(?:_\d+)?)\.unitypackage$",
+            RegexOptions.Compiled
+        );
 
         public async Task IndexRoughLocal(FolderSpec spec, bool fromAssetStore, bool force = false)
         {
-            ResetState(false);
-
-            int progressId = MetaProgress.Start("Updating asset inventory index");
             string[] packages = await Task.Run(() => Directory.GetFiles(spec.GetLocation(true), "*.unitypackage", SearchOption.AllDirectories));
+
+            MainCount = packages.Length;
             for (int i = 0; i < packages.Length; i++)
             {
                 if (CancellationRequested) break;
+                if (IsIgnoredPath(packages[i])) continue;
                 string package = packages[i];
 
-                MainCount = packages.Length; // set again, can get lost or changed in sub processes
-                MetaProgress.Report(progressId, i + 1, packages.Length, package);
+                MetaProgress.Report(ProgressId, i + 1, packages.Length, package);
                 if (i % 50 == 0) await Task.Yield(); // let editor breath
 
                 Asset asset = HandlePackage(fromAssetStore, package, i, force);
@@ -38,93 +40,12 @@ namespace AssetInventory
 
                 if (spec.assignTag && !string.IsNullOrWhiteSpace(spec.tag))
                 {
-                    Tagging.AddTagAssignment(asset.Id, spec.tag, TagAssignment.Target.Package, fromAssetStore);
+                    Tagging.AddAssignment(asset.Id, spec.tag, TagAssignment.Target.Package, fromAssetStore);
                 }
             }
-            MetaProgress.Remove(progressId);
-            ResetState(true);
         }
 
-        public IEnumerator IndexRoughOnline(List<AssetInfo> packages, Action callback)
-        {
-            ResetState(false);
-
-            int progressId = MetaProgress.Start("Downloading and indexing assets");
-
-            for (int i = 0; i < packages.Count; i++)
-            {
-                if (CancellationRequested) break;
-                AssetInfo info = packages[i];
-
-                MetaProgress.Report(progressId, i + 1, packages.Count, info.GetDisplayName());
-
-                // check if metadata is already available for triggering and monitoring
-                if (string.IsNullOrWhiteSpace(info.OriginalLocation)) continue;
-
-                // skip if too large or unknown download size yet
-                if (AI.Config.limitAutoDownloads && (info.PackageSize == 0 || Mathf.RoundToInt(info.PackageSize / 1024f / 1024f) >= AI.Config.downloadLimit)) continue;
-
-                AI.GetObserver().Attach(info);
-                if (!info.PackageDownloader.IsDownloadSupported()) continue;
-
-                CurrentMain = $"Downloading package {info.GetDisplayName()}...";
-                MainCount = packages.Count; // set again, can get lost or changed in sub processes
-                MainProgress = i + 1;
-                CurrentSub = IOUtils.RemoveInvalidChars(info.GetDisplayName());
-                SubCount = 0;
-                SubProgress = 0;
-
-                info.PackageDownloader.Download();
-                do
-                {
-                    if (CancellationRequested) break; // download will finish in that case and not be removed
-
-                    AssetDownloadState state = info.PackageDownloader.GetState();
-                    SubCount = Mathf.RoundToInt(state.bytesTotal / 1024f / 1024f);
-                    SubProgress = Mathf.RoundToInt(state.bytesDownloaded / 1024f / 1024f);
-                    if (SubCount == 0) SubCount = SubProgress; // in case total size was not available yet
-                    yield return null;
-                } while (info.IsDownloading());
-                if (CancellationRequested) break;
-
-                info.SetLocation(info.PackageDownloader.GetAsset().Location);
-                info.Refresh();
-                info.PackageDownloader.RefreshState();
-
-                if (!info.IsDownloaded)
-                {
-                    Debug.LogError($"Downloading '{info}' failed. Continuing with next package.");
-                    continue;
-                }
-
-                HandlePackage(true, AI.DeRel(info.Location), i);
-                Task task = IndexDetails(info.AssetId);
-                yield return new WaitWhile(() => !task.IsCompleted);
-
-                // remove again
-                if (!AI.Config.keepAutoDownloads)
-                {
-                    // perform backup before deleting, as otherwise the file would not be considered
-                    if (AI.Config.createBackups)
-                    {
-                        AssetBackup backup = new AssetBackup();
-                        Task task2 = backup.Backup(info.AssetId);
-                        yield return new WaitWhile(() => !task2.IsCompleted);
-                    }
-
-                    IOUtils.TryDeleteFile(info.GetLocation(true));
-                }
-
-                info.Refresh();
-            }
-
-            MetaProgress.Remove(progressId);
-            ResetState(true);
-
-            callback?.Invoke();
-        }
-
-        private static Asset HandlePackage(bool fromAssetStore, string package, int currentIndex, bool force = false, Asset parent = null, AssetFile subPackage = null)
+        internal Asset HandlePackage(bool fromAssetStore, string package, int currentIndex, bool force = false, Asset parent = null, AssetFile subPackage = null)
         {
             package = package.Replace("\\", "/");
             string relPackage = AI.MakeRelative(package);
@@ -208,10 +129,23 @@ namespace AssetInventory
                 if (AI.Config.excludeByDefault) asset.Exclude = true;
                 if (AI.Config.extractByDefault) asset.KeepExtracted = true;
                 if (AI.Config.backupByDefault) asset.Backup = true;
+
+                if (header == null)
+                {
+                    // detect special Synty file name patterns
+                    // <GROUP>_<NAME>_Unity_<MINVERSION>_v<VERSION>.unitypackage
+                    // e.g. POLYGON_Starter_Unity_2021_3_v1_0_1.unitypackage
+                    if (TryParseSyntyFilename(Path.GetFileName(package), out string group, out string name, out string minVersion, out string version))
+                    {
+                        asset.DisplayName = group + " " + name.Replace("_", " ").Trim();
+                        asset.SupportedUnityVersions = minVersion.Replace("_", ".");
+                        asset.Version = version.Replace("_", ".");
+                    }
+                }
             }
 
             // update progress only if really doing work to save refresh time in UI
-            CurrentMain = package;
+            CurrentMain = IOUtils.GetFileName(package);
             MainProgress = currentIndex + 1;
 
             ApplyHeader(header, asset);
@@ -237,6 +171,26 @@ namespace AssetInventory
             return asset;
         }
 
+        public static bool TryParseSyntyFilename(string filename, out string group, out string name, out string minVersion, out string version)
+        {
+            group = "";
+            name = "";
+            minVersion = "";
+            version = "";
+
+            Match match = SyntyNameRegex.Match(filename);
+            if (!match.Success)
+            {
+                return false;
+            }
+            group = match.Groups["group"].Value;
+            name = match.Groups["name"].Value;
+            minVersion = match.Groups["minVersion"].Value;
+            version = match.Groups["version"].Value;
+
+            return true;
+        }
+
         public static void ApplyHeader(AssetHeader header, Asset asset)
         {
             if (header == null) return;
@@ -255,20 +209,20 @@ namespace AssetInventory
                 // 1. if there is an info file next to the package in the cache it will contain the upload id
                 // if the upload id matches the current metadata use the live version instead
                 bool skipVersion = false;
-                if (!string.IsNullOrWhiteSpace(asset.UploadId))
+                if (asset.UploadId > 0)
                 {
                     string infoFile = asset.GetLocation(true) + ".info.json";
                     if (File.Exists(infoFile))
                     {
                         CacheInfo cacheInfo = JsonConvert.DeserializeObject<CacheInfo>(File.ReadAllText(infoFile));
-                        if (cacheInfo != null && cacheInfo.upload_id == asset.UploadId)
+                        if (cacheInfo != null && int.TryParse(cacheInfo.upload_id, out int uploadId) && uploadId == asset.UploadId)
                         {
                             asset.Version = asset.LatestVersion;
                             skipVersion = true;
                         }
                     }
                     // 2. if the header contains the upload id and it matches the current metadata use the live version instead as well
-                    else if (header.upload_id == asset.UploadId)
+                    else if (int.TryParse(header.upload_id, out int uploadId) && uploadId == asset.UploadId)
                     {
                         asset.Version = asset.LatestVersion;
                         skipVersion = true;
@@ -282,10 +236,8 @@ namespace AssetInventory
             if (header.category != null) asset.DisplayCategory = header.category.label;
         }
 
-        public async Task IndexDetails(int assetId = 0, bool actAsSubImporter = false)
+        public async Task IndexDetails(int assetId = 0)
         {
-            if (!actAsSubImporter) ResetState(false);
-            int progressId = MetaProgress.Start("Indexing package contents");
             List<Asset> assets;
             if (assetId == 0)
             {
@@ -295,17 +247,16 @@ namespace AssetInventory
             {
                 assets = DBAdapter.DB.Table<Asset>().Where(asset => asset.Id == assetId && (asset.AssetSource == Asset.Source.AssetStorePackage || asset.AssetSource == Asset.Source.CustomPackage)).ToList();
             }
+
+            MainCount = assets.Count;
             for (int i = 0; i < assets.Count; i++)
             {
                 if (CancellationRequested) break;
                 if (!AI.Config.indexSubPackages && assets[i].ParentId > 0) continue;
 
-                MetaProgress.Report(progressId, i + 1, assets.Count, assets[i].GetLocation(true));
-                MainCount = assets.Count; // set again, can get lost in sub processes
-                CurrentMain = assets[i].GetLocation(true) + " (" + EditorUtility.FormatBytes(assets[i].PackageSize) + ")";
-                MainProgress = i + 1;
+                SetProgress(IOUtils.GetFileName(assets[i].GetLocation(true)) + " (" + EditorUtility.FormatBytes(assets[i].PackageSize) + ")", i + 1);
 
-                await IndexPackage(assets[i], progressId);
+                await IndexPackage(assets[i], ProgressId);
                 await Task.Yield(); // let editor breath
                 if (CancellationRequested) break;
 
@@ -324,12 +275,12 @@ namespace AssetInventory
 
                 assets[i].CurrentState = Asset.State.Done;
                 Persist(assets[i]);
+
+                AI.TriggerPackageRefresh();
             }
-            MetaProgress.Remove(progressId);
-            if (!actAsSubImporter) ResetState(true);
         }
 
-        private static async Task IndexPackage(Asset asset, int progressId)
+        private async Task IndexPackage(Asset asset, int progressId)
         {
             if (string.IsNullOrEmpty(asset.Location)) return;
 
@@ -356,7 +307,7 @@ namespace AssetInventory
             {
                 string targetDir = Path.Combine(previewPath, asset.Id.ToString());
                 string targetFile = Path.Combine(targetDir, "a-" + asset.Id + Path.GetExtension(assetPreviewFile));
-                if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
+                Directory.CreateDirectory(targetDir);
                 File.Copy(assetPreviewFile, targetFile, true);
             }
 
@@ -375,6 +326,7 @@ namespace AssetInventory
             }
 
             List<AssetFile> subPackages = new List<AssetFile>();
+            SubCount = assets.Length;
             for (int i = 0; i < assets.Length; i++)
             {
                 string packagePath = assets[i];
@@ -382,7 +334,7 @@ namespace AssetInventory
                 if (IsIgnoredPath(fileName)) continue;
 
                 string dir = Path.GetDirectoryName(packagePath).Replace("\\", "/");
-                string assetFile = Path.Combine(dir, "asset");
+                string assetFile = Path.Combine(dir, "asset"); // TODO: file not guaranteed to be there
                 string previewFile = Path.Combine(dir, "preview.png");
                 string guid = Path.GetFileName(dir);
 
@@ -392,7 +344,6 @@ namespace AssetInventory
                     continue;
                 }
 
-                SubCount = assets.Length; // set again, can get lost in sub processes
                 CurrentSub = fileName;
                 SubProgress = i + 1;
                 MetaProgress.Report(subProgressId, i + 1, assets.Length, fileName);
@@ -416,7 +367,7 @@ namespace AssetInventory
                 af.Type = IOUtils.GetExtensionWithoutDot(fileName).ToLowerInvariant();
 
                 // if only new sub packages should be indexed, skip this one
-                if (asset.CurrentState == Asset.State.SubInProcess && !af.IsPackage() && !af.IsArchive()) continue;
+                if (asset.CurrentState == Asset.State.SubInProcess && !af.IsUnityPackage() && !af.IsArchive()) continue;
 
                 if (AI.Config.gatherExtendedMetadata)
                 {
@@ -431,7 +382,7 @@ namespace AssetInventory
                 {
                     string targetFile = af.GetPreviewFile(previewPath);
                     string targetDir = Path.GetDirectoryName(targetFile);
-                    if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
+                    Directory.CreateDirectory(targetDir);
 
                     bool copyOriginal = true;
                     #if UNITY_2021_2_OR_NEWER && UNITY_EDITOR_WIN
@@ -448,22 +399,27 @@ namespace AssetInventory
                     #endif
                     if (copyOriginal)
                     {
-                        File.Copy(previewFile, targetFile, true);
-                        af.PreviewState = AssetFile.PreviewOptions.Provided;
+                        try
+                        {
+                            File.Copy(previewFile, targetFile, true);
+                            af.PreviewState = AssetFile.PreviewOptions.Provided;
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogError($"Could not copy preview '{previewFile}' to '{targetFile}': {e.Message}");
+                        }
                     }
                     af.Hue = -1f;
 
                     Persist(af);
                 }
-                if (af.IsPackage() || af.IsArchive()) subPackages.Add(af);
+                if (af.IsUnityPackage() || af.IsArchive()) subPackages.Add(af);
 
                 if (CancellationRequested) break;
-                MemoryObserver.Do(size);
-                await Cooldown.Do();
+                AI.MemoryObserver.Do(size);
+                await AI.Cooldown.Do();
             }
             CurrentSub = null;
-            SubCount = 0;
-            SubProgress = 0;
             MetaProgress.Remove(subProgressId);
 
             await AI.ProcessSubPackages(asset, subPackages);
@@ -471,21 +427,21 @@ namespace AssetInventory
             if (!wasCachedAlready) RemoveWorkFolder(asset, tempPath);
         }
 
-        public static async Task ProcessSubPackages(Asset asset, List<AssetFile> subPackages)
+        public async Task ProcessSubPackages(Asset asset, List<AssetFile> subPackages)
         {
             // index sub-packages while extracted
             if (AI.Config.indexSubPackages && subPackages.Count > 0)
             {
-                int subProgressId2 = MetaProgress.Start("Indexing sub-packages");
+                CurrentMain = "Indexing sub-packages";
+                MainCount = subPackages.Count;
                 for (int i = 0; i < subPackages.Count; i++)
                 {
                     if (CancellationRequested) break;
 
-                    CurrentMain = "Indexing sub-packages";
-                    MainCount = subPackages.Count;
-                    MainProgress = i + 1;
-
                     AssetFile subPackage = subPackages[i];
+
+                    SetProgress(subPackage.FileName, i + 1);
+
                     string path = await AI.EnsureMaterializedAsset(asset, subPackage);
                     if (path == null)
                     {
@@ -496,11 +452,10 @@ namespace AssetInventory
                     if (subAsset == null) continue;
 
                     // index immediately
-                    await IndexPackage(subAsset, subProgressId2);
+                    await IndexPackage(subAsset, ProgressId);
                     subAsset.CurrentState = Asset.State.Done;
                     Persist(subAsset);
                 }
-                MetaProgress.Remove(subProgressId2);
             }
         }
 
@@ -513,23 +468,28 @@ namespace AssetInventory
             {
                 using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
-                    byte[] header = new byte[17];
-                    stream.Read(header, 0, 17);
+#if UNITY_2021_2_OR_NEWER
+                    Span<byte> headerBuffer = stackalloc byte[17];
+                    if (stream.Read(headerBuffer) < 17) return null;
 
                     // check if really a JSON object
-                    if (header[16] == '{')
-                    {
-                        stream.Seek(14, SeekOrigin.Begin);
-                        byte[] lengthData = new byte[2];
-                        stream.Read(lengthData, 0, 2);
-                        int length = BitConverter.ToInt16(lengthData, 0);
+                    if (headerBuffer[16] != (byte)'{') return null;
+                    int length = System.Buffers.Binary.BinaryPrimitives.ReadInt16LittleEndian(headerBuffer.Slice(14, 2));
+#else
+                    byte[] headerBuffer = new byte[17];
+                    if (stream.Read(headerBuffer, 0, 17) < 17) return null;
 
-                        stream.Seek(16, SeekOrigin.Begin);
-                        byte[] data = new byte[length];
-                        stream.Read(data, 0, length);
-                        string headerData = Encoding.ASCII.GetString(data);
-                        return JsonConvert.DeserializeObject<AssetHeader>(headerData);
-                    }
+                    // check if really a JSON object
+                    if (headerBuffer[16] != (byte)'{') return null;
+                    int length = BitConverter.ToInt16(headerBuffer, 14);
+#endif
+                    byte[] jsonBuffer = new byte[length];
+                    jsonBuffer[0] = headerBuffer[16];
+                    int remaining = length - 1;
+                    if (stream.Read(jsonBuffer, 1, remaining) != remaining) return null;
+
+                    string headerData = Encoding.ASCII.GetString(jsonBuffer);
+                    return JsonConvert.DeserializeObject<AssetHeader>(headerData);
                 }
             }
             catch (IOException e)
@@ -544,7 +504,6 @@ namespace AssetInventory
             {
                 Debug.LogError($"Could not parse package '{path}': {e.Message}");
             }
-
             return null;
         }
     }

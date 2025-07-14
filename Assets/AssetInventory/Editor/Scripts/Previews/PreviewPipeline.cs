@@ -11,8 +11,8 @@ namespace AssetInventory
         public async Task<int> RecreateScheduledPreviews(List<AssetInfo> assets, List<AssetInfo> allAssets)
         {
             string assetFilter = GetAssetFilter(assets);
-            string query = $"select *, AssetFile.Id as Id from AssetFile inner join Asset on Asset.Id = AssetFile.AssetId where Asset.Exclude = false and AssetFile.PreviewState=? {assetFilter} order by Asset.Id";
-            List<AssetInfo> files = DBAdapter.DB.Query<AssetInfo>(query, AssetFile.PreviewOptions.Redo).ToList();
+            string query = $"select *, AssetFile.Id as Id from AssetFile inner join Asset on Asset.Id = AssetFile.AssetId where Asset.Exclude = false and (AssetFile.PreviewState=? or AssetFile.PreviewState=?) {assetFilter} order by Asset.Id";
+            List<AssetInfo> files = DBAdapter.DB.Query<AssetInfo>(query, AssetFile.PreviewOptions.Redo, AssetFile.PreviewOptions.RedoMissing).ToList();
             AI.ResolveParents(files, allAssets);
 
             return await RecreatePreviews(files);
@@ -38,23 +38,22 @@ namespace AssetInventory
         {
             int created = 0;
 
-            ResetState(false);
-            int progressId = MetaProgress.Start("Recreating previews");
-
             UnityPreviewGenerator.Init(files.Count);
 
             Asset curAsset = null;
             bool wasCurCached = false;
             string curTempPath = null;
+
+            MainCount = files.Count;
+
             foreach (AssetInfo info in files.OrderBy(info => info.AssetId))
             {
-                SubProgress++;
-                SubCount = files.Count;
-                CurrentSub = $"Creating preview for {info.FileName}";
-                MetaProgress.Report(progressId, SubProgress, SubCount, string.Empty);
+                MainProgress++;
+                SetProgress(info.FileName, MainProgress);
+
                 if (CancellationRequested) break;
-                await Cooldown.Do();
-                if (SubProgress % 5000 == 0) await Task.Yield(); // let editor breath in case there are many non-previewable files 
+                await AI.Cooldown.Do();
+                if (MainProgress % 5000 == 0) await Task.Yield(); // let editor breath in case there are many non-previewable files 
 
                 if (!info.IsDownloaded)
                 {
@@ -80,7 +79,7 @@ namespace AssetInventory
                     wasCurCached = Directory.Exists(curTempPath);
                 }
 
-                if (SubProgress % 10 == 0) await Task.Yield(); // let editor breath
+                if (MainProgress % 10 == 0) await Task.Yield(); // let editor breath
 
                 await PreviewManager.Create(info, null, () => created++);
             }
@@ -88,9 +87,6 @@ namespace AssetInventory
             UnityPreviewGenerator.CleanUp();
 
             if (!wasCurCached && autoRemoveCache) RemoveWorkFolder(curAsset, curTempPath);
-
-            MetaProgress.Remove(progressId);
-            ResetState(true);
 
             return created;
         }
@@ -105,18 +101,15 @@ namespace AssetInventory
             List<AssetInfo> files = DBAdapter.DB.Query<AssetInfo>(query, Asset.Source.AssetStorePackage, Asset.Source.CustomPackage, AssetFile.PreviewOptions.Provided).ToList();
             AI.ResolveParents(files, allAssets);
 
-            ResetState(false);
-            int progressId = MetaProgress.Start("Restoring previews");
-            SubCount = files.Count;
-
+            MainCount = files.Count;
             foreach (AssetInfo info in files)
             {
-                SubProgress++;
-                CurrentSub = $"Restoring preview for {info.FileName}";
-                MetaProgress.Report(progressId, SubProgress, SubCount, string.Empty);
+                MainProgress++;
+                SetProgress(info.FileName, MainProgress);
+
                 if (CancellationRequested) break;
-                await Cooldown.Do();
-                if (SubProgress % 50 == 0) await Task.Yield(); // let editor breath 
+                await AI.Cooldown.Do();
+                if (MainProgress % 50 == 0) await Task.Yield(); // let editor breath 
 
                 if (!info.IsDownloaded) continue;
 
@@ -150,9 +143,6 @@ namespace AssetInventory
 
                 restored++;
             }
-
-            MetaProgress.Remove(progressId);
-            ResetState(true);
 
             return restored;
         }

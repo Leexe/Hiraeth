@@ -29,7 +29,7 @@ namespace AssetInventory
             string query = "update AssetFile set PreviewState = ? where Id = ?";
             foreach (AssetInfo info in DBIssues)
             {
-                DBAdapter.DB.Execute(query, AssetFile.PreviewOptions.Redo, info.Id);
+                DBAdapter.DB.Execute(query, AssetFile.PreviewOptions.RedoMissing, info.Id);
             }
             await Task.Yield();
 

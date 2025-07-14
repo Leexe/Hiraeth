@@ -11,7 +11,29 @@ namespace AssetInventory
         public event Action<AssetInfo> OnDoubleClick;
 
         public List<AssetInfo> packages;
-        public GUIContent[] contents;
+        private GUIContent[] _contents;
+        public GUIContent[] contents
+        {
+            get => _contents;
+            set
+            {
+                if (_contents != null)
+                {
+                    foreach (GUIContent content in _contents)
+                    {
+                        if (content != null && content.image != null)
+                        {
+                            // Skip built-in Unity icons which shouldn't be destroyed
+                            if (!AssetDatabase.GetAssetPath(content.image).StartsWith("Library/"))
+                            {
+                                UnityEngine.Object.DestroyImmediate(content.image);
+                            }
+                        }
+                    }
+                }
+                _contents = value;
+            }
+        }
         public List<AssetInfo> selectionItems;
         public int selectionCount;
         public int selectionTile;
@@ -58,18 +80,19 @@ namespace AssetInventory
 
         public void Draw(float width, int inspectorCount, int tileSize, GUIStyle tileStyle, GUIStyle selectedTileStyle)
         {
-            float actualWidth = width - UIStyles.INSPECTOR_WIDTH * inspectorCount - 2 * UIStyles.BORDER_WIDTH;
-            int cells = Mathf.RoundToInt(Mathf.Clamp(Mathf.Floor(actualWidth / tileSize), 1, 99));
+            float actualWidth = width - UIStyles.INSPECTOR_WIDTH * inspectorCount - UIStyles.BORDER_WIDTH;
+            int cells = Mathf.Clamp(Mathf.FloorToInt(actualWidth / (tileSize + AI.Config.tileMargin)), 1, 99);
             if (cells < 2) cells = 2;
 
             if (enlargeTiles)
             {
                 // enlarge tiles dynamically so they take the full width
-                tileSize = Mathf.RoundToInt(actualWidth / cells);
+                tileSize = Mathf.FloorToInt((actualWidth - cells * AI.Config.tileMargin) / cells);
             }
 
             tileStyle.fixedHeight = tileSize;
             tileStyle.fixedWidth = tileSize;
+            tileStyle.margin = new RectOffset(AI.Config.tileMargin, AI.Config.tileMargin, AI.Config.tileMargin, AI.Config.tileMargin); // set again due to initial style only being set once so changes would not reflect
             selectedTileStyle.fixedHeight = tileStyle.fixedHeight + tileStyle.margin.top;
             selectedTileStyle.fixedWidth = tileStyle.fixedWidth + tileStyle.margin.left;
 

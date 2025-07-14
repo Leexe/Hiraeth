@@ -7,6 +7,8 @@ namespace AssetInventory
     {
         private void DrawAboutTab()
         {
+            GUIStyle textColor = EditorGUIUtility.isProSkin ? UIStyles.whiteCenter : UIStyles.blackCenter;
+
             EditorGUILayout.Space(30);
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
@@ -14,15 +16,17 @@ namespace AssetInventory
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("A tool by Impossible Robert", UIStyles.whiteCenter);
+            EditorGUILayout.LabelField("A tool by Impossible Robert", textColor);
             EditorGUILayout.Separator();
-            EditorGUILayout.LabelField("Developer: Robert Wetzold", UIStyles.whiteCenter);
+            EditorGUILayout.LabelField("Developer: Robert Wetzold", textColor);
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("www.wetzold.com/tools", UIStyles.centerLinkLabel)) Application.OpenURL("https://www.wetzold.com/tools");
+            if (GUILayout.Button("Online Resources", UIStyles.centerLinkLabel)) Application.OpenURL(AI.HOME_LINK);
+            EditorGUILayout.LabelField(" | ", EditorStyles.centeredGreyMiniLabel, GUILayout.Width(6));
+            if (GUILayout.Button("Join Discord!", UIStyles.centerLinkLabel)) Application.OpenURL(AI.DISCORD_LINK);
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
-            EditorGUILayout.LabelField($"Version {AI.VERSION}", UIStyles.whiteCenter);
+            EditorGUILayout.LabelField($"Version {AI.VERSION}", textColor);
             EditorGUILayout.Space(30);
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();

@@ -2,13 +2,13 @@
 <objects serializationModel="Studio.02.03.00">
 	<object class="Event" id="{d586a11d-6eeb-4ca4-8a70-06df59db572c}">
 		<property name="name">
-			<value>Land (Hireath)</value>
+			<value>Land</value>
 		</property>
 		<property name="outputFormat">
 			<value>1</value>
 		</property>
 		<relationship name="folder">
-			<destination>{04a6e5cf-98df-4465-9e4c-8121928012eb}</destination>
+			<destination>{499b7ac4-09ae-4217-870a-0a270c8e23dd}</destination>
 		</relationship>
 		<relationship name="mixer">
 			<destination>{0edb8a21-c8a2-441e-91c5-6eb5946b84bd}</destination>
@@ -59,7 +59,7 @@
 			<destination>{62966983-313f-4536-84b3-17daa66595f5}</destination>
 		</relationship>
 		<relationship name="output">
-			<destination>{054981bc-4193-4069-ad6b-44f061e7560c}</destination>
+			<destination>{c7feec53-90ac-44e3-96e5-84f9b843aea1}</destination>
 		</relationship>
 	</object>
 	<object class="EventAutomatableProperties" id="{76b198ee-105e-4955-a1c8-b920747082f1}" />
@@ -135,6 +135,7 @@
 	<object class="MixerBusEffectChain" id="{d0161d7e-2ec7-449b-8e5e-bee8f35c9f6b}">
 		<relationship name="effects">
 			<destination>{2b9ffb0b-57e5-42a2-b102-d49d841a3872}</destination>
+			<destination>{e591e299-0f0a-47f5-81c0-ea3adf50ba55}</destination>
 		</relationship>
 	</object>
 	<object class="MixerBusPanner" id="{2b79eeb0-f379-4da6-97d5-bf1730c31902}" />
@@ -149,12 +150,23 @@
 		</relationship>
 	</object>
 	<object class="MixerBusFader" id="{2b9ffb0b-57e5-42a2-b102-d49d841a3872}" />
+	<object class="MixerSend" id="{e591e299-0f0a-47f5-81c0-ea3adf50ba55}">
+		<property name="level">
+			<value>-16</value>
+		</property>
+		<property name="inputFormat">
+			<value>1</value>
+		</property>
+		<relationship name="mixerReturn">
+			<destination>{cc03a880-37a3-4afc-8ea5-c742c1f1beeb}</destination>
+		</relationship>
+	</object>
 	<object class="AutomationPoint" id="{a1c3831c-c546-481c-bf0c-0284dbdc7336}">
 		<property name="position">
 			<value>0.90000000000000002</value>
 		</property>
 		<property name="value">
-			<value>10</value>
+			<value>1.5</value>
 		</property>
 	</object>
 	<object class="AutomationPoint" id="{57f24137-48a3-4998-9ada-7c4cbab2d605}">
@@ -162,7 +174,7 @@
 			<value>0</value>
 		</property>
 		<property name="value">
-			<value>-10</value>
+			<value>1.5</value>
 		</property>
 	</object>
 </objects>

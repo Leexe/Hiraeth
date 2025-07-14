@@ -1,0 +1,144 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &5284738246904182790
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 896489229889102412}
+  - component: {fileID: 2084219821968199089}
+  - component: {fileID: 2415320947301938532}
+  - component: {fileID: 3746895366620341552}
+  - component: {fileID: 4421487178055629642}
+  m_Layer: 0
+  m_Name: Player
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &896489229889102412
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5284738246904182790}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2084219821968199089
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5284738246904182790}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0be1e6c8a88015d4c97fc5bf4558acf7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _characterController: {fileID: 0}
+  _shootingSystem: {fileID: 4421487178055629642}
+  _cameraTransform: {fileID: 0}
+  _doubleCrouchBuffer: 0.5
+  OnEscape:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &2415320947301938532
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5284738246904182790}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e31faa0028cb445dfb50f129c9b7f84b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  maxStaminaCharges: 3
+  staminaBaseRechargeRate: 2
+  StaminaRecharging:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &3746895366620341552
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5284738246904182790}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 77e0c7f454b71594cb8c5d57909291b6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _characterController: {fileID: 0}
+  _shootingSystem: {fileID: 4421487178055629642}
+  _playerGameObject: {fileID: 0}
+--- !u!114 &4421487178055629642
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5284738246904182790}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: baadb08e386fd1b40b750115ea77dd85, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _characterTransform: {fileID: 0}
+  _gunShootTransform: {fileID: 0}
+  _fpsCamera: {fileID: 0}
+  _bulletPrefab: {fileID: 1319342094442512254, guid: 09428e9a9d4d2ac449ff8f7fabcade33, type: 3}
+  _damage: 1
+  _maxAmmo: 6
+  _bulletVelocity: 1000
+  _fireBuffer: 0.1
+  _reloadBuffer: 0.5
+  _bulletSpreadCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 1.6014482
+      outSlope: 1.6014482
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0.112619594
+    - serializedVersion: 3
+      time: 1.5
+      value: 0.9924404
+      inSlope: -0.038085714
+      outSlope: -0.038085714
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.5071993
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  _bulletSpreadAdd: 0.8
+  _bulletDistance: 25
+  _enemyLayerMask:
+    serializedVersion: 2
+    m_Bits: 0
+  OnGunShoot:
+    m_PersistentCalls:
+      m_Calls: []
+  OnGunReload:
+    m_PersistentCalls:
+      m_Calls: []

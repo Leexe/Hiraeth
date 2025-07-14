@@ -16,10 +16,18 @@ SQLite-net is a convenience wrapper for sqlite, obtained from https://github.com
 
 The editor audio utils provide playback capabilities during edit mode, obtained from https://github.com/JohannesDeml/EditorAudioUtils. It is licensed under the MIT license.
 
-**d. Package2Folder
+**d. Package2Folder**
 
 P2F, obtained from https://github.com/Code-Stage/Package2Folder, allows tweaking the target folder during the Unity package import process. It is licensed under Mozilla Public License Version 2.0. 
 
 **e. SharpCompress**
 
 The SharpCompress library allows extracting zip and rar archives and is obtained from https://github.com/adamhathcock/sharpcompress. It is licensed under the MIT license.
+
+**f. LibGit2Sharp**
+
+The LibGit2Sharp library allows working with git repositories. It is licensed under the MIT license.
+
+**g. Scriban**
+
+The Scriban library provides templating capabilities. It is licensed under the BSD-2-Clause license.

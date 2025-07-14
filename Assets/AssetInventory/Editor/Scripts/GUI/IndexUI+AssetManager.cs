@@ -1,15 +1,15 @@
-﻿using System.Threading.Tasks;
-using UnityEditor;
+﻿using UnityEditor;
 using UnityEngine;
 
 #if USE_ASSET_MANAGER && USE_CLOUD_IDENTITY
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.IO;
 using Unity.Cloud.Assets;
 using Unity.Cloud.Common;
-#else
+#elif UNITY_2022_3_OR_NEWER
 using UnityEditor.PackageManager;
 #endif
 
@@ -21,41 +21,39 @@ namespace AssetInventory
 
         private void DrawAssetManager()
         {
-            EditorGUI.BeginChangeCheck();
-            AI.Config.indexAssetManager = GUILayout.Toggle(AI.Config.indexAssetManager, "Unity Asset Manager", GUILayout.MaxWidth(250));
-            if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
-
-            if (AI.Config.indexAssetManager)
+            int labelWidth = 120;
+            GUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Cloud Dashboard", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+            if (GUILayout.Button("Open", UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(false)))
             {
-                BeginIndentBlock(16);
+                Application.OpenURL(AI.CLOUD_HOME_URL);
+            }
+            GUILayout.EndHorizontal();
 
 #if !UNITY_2022_3_OR_NEWER
-                EditorGUILayout.HelpBox("In order to connect to Asset Manager, Unity 2022.3 or higher is required.", MessageType.Error);
+            EditorGUILayout.HelpBox("In order to connect to Asset Manager, Unity 2022.3 or higher is required.", MessageType.Error);
 #elif !USE_ASSET_MANAGER || !USE_CLOUD_IDENTITY
-                EditorGUILayout.HelpBox("In order to connect to Asset Manager, the following packages need to be installed: Unity Cloud Assets 1.4.0+, Unity Cloud Identity 1.3.0+", MessageType.Error);
-                if (GUILayout.Button("Install Packages"))
-                {
-                    Client.AddAndRemove(new[] {"com.unity.cloud.assets@1.4.0", "com.unity.cloud.identity@1.3.0"});
-                }
-#else
-                if (string.IsNullOrWhiteSpace(CloudProjectSettings.accessToken))
-                {
-                    EditorGUILayout.HelpBox("Please log in to Unity Cloud Identity to use Asset Manager.", MessageType.Info);
-                    if (GUILayout.Button("Log In"))
-                    {
-                        CloudProjectSettings.ShowLogin();
-                    }
-                }
-                else
-                {
-                    GUILabelWithText("Current User", CloudProjectSettings.userName);
-                }
-                GUILabelWithText("Organizations", "-All-");
-                GUILabelWithText("Projects", "-All-");
-#endif
-
-                EndIndentBlock(false);
+            EditorGUILayout.HelpBox("In order to connect to Asset Manager, the following packages need to be installed: Unity Cloud Assets 1.5.1+, Unity Cloud Identity 1.3.1+", MessageType.Error);
+            if (GUILayout.Button("Install Packages"))
+            {
+                Client.AddAndRemove(new[] {"com.unity.cloud.assets@1.5.1", "com.unity.cloud.identity@1.3.1"});
             }
+#else
+            if (string.IsNullOrWhiteSpace(CloudProjectSettings.accessToken))
+            {
+                EditorGUILayout.HelpBox("Please log in to Unity Cloud Identity to use Asset Manager.", MessageType.Info);
+                if (GUILayout.Button("Log In"))
+                {
+                    CloudProjectSettings.ShowLogin();
+                }
+            }
+            else
+            {
+                GUILabelWithText("Current User", CloudProjectSettings.userName, labelWidth);
+            }
+            GUILabelWithText("Organizations", "-All-", labelWidth);
+            GUILabelWithText("Projects", "-All-", labelWidth);
+#endif
         }
 
 #if USE_ASSET_MANAGER && USE_CLOUD_IDENTITY
@@ -171,16 +169,24 @@ namespace AssetInventory
             }
 
             // add to project
-            await AssetManagerImporter.PersistAssetFiles(cam, newAssets, project.ToAsset().GetRootAsset(), false);
+            await UploadAssets(cam, newAssets, project.ToAsset().GetRootAsset());
 
             // add to collection
             if (collection != null)
             {
-                await AssetManagerImporter.PersistAssetFiles(cam, newAssets, project.ToAsset(), false);
+                await UploadAssets(cam, newAssets, project.ToAsset());
             }
             AI.TriggerPackageRefresh();
 
             CloudAssetManagement.DecBusyCount();
+        }
+
+        private static async Task UploadAssets(CloudAssetManagement cam, List<IAsset> newAssets, Asset project)
+        {
+            AssetManagerImporter assetManagerImporter = new AssetManagerImporter();
+            AI.Actions.RegisterRunningAction(ActionHandler.ACTION_ASSET_MANAGER_INDEX, assetManagerImporter, "Uploading to Asset Manager");
+            await assetManagerImporter.PersistAssetFiles(cam, newAssets, project, false);
+            assetManagerImporter.FinishProgress();
         }
 
         private static async Task UploadPreview(AssetInfo info, IAsset cloudAsset, CloudAssetManagement cam)

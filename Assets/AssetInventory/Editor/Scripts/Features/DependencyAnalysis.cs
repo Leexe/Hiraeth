@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -12,9 +13,11 @@ namespace AssetInventory
 {
     public class DependencyAnalysis
     {
-        private static readonly Regex FileGuid = new Regex("guid: (?:([a-z0-9]*))");
-        private static readonly Regex GraphGuid = new Regex("\\\\\"guid\\\\\": \\\\\\\"([^\"]*)\\\\\"");
-        private static readonly Regex JsonGraphGuid = new Regex("\\\\\\\\\\\\\"guid\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"([^\"]*)\\\\\\\\\\\\\"");
+        private static readonly Regex FileGuid = new Regex("guid: (?:([a-z0-9]*))", RegexOptions.Compiled);
+        private static readonly Regex GraphGuid = new Regex("\\\\\"guid\\\\\": \\\\\\\"([^\"]*)\\\\\"", RegexOptions.Compiled);
+        private static readonly Regex JsonGraphGuid = new Regex("\\\\\\\\\\\\\"guid\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"([^\"]*)\\\\\\\\\\\\\"", RegexOptions.Compiled);
+        private static readonly Regex IncludeFilesRegex = new Regex(@"#include(?:_with_pragmas)?\s*""(.+?)""", RegexOptions.Compiled);
+        private static readonly Regex CustomEditorRegex = new Regex(@"CustomEditor\s*""(.+?)""", RegexOptions.Compiled); // Regex to match custom editor lines and capture names
 
         private static readonly string[] ScanDependencies =
         {
@@ -60,7 +63,8 @@ namespace AssetInventory
             }
 
             // calculate
-            List<AssetFile> deps = await DoCalculateDependencies(workInfo, targetPath);
+            ConcurrentDictionary<string, bool> processedGuids = new ConcurrentDictionary<string, bool>();
+            List<AssetFile> deps = await DoCalculateDependencies(workInfo, targetPath, processedGuids);
 
             // free up memory
             if (!workInfo.SRPUsed)
@@ -80,7 +84,11 @@ namespace AssetInventory
             }
             info.DependencyState = workInfo.DependencyState;
 
-            info.Dependencies = deps.OrderBy(af => af.Path).ToList();
+            info.Dependencies = deps
+                .OrderBy(f => f.AssetId)
+                .ThenBy(f => f.Path)
+                .ThenBy(f => f.Type)
+                .ToList();
             info.DependencySize = info.Dependencies.Sum(af => af.Size);
             info.MediaDependencies = info.Dependencies.Where(af => af.Type != "cs" && af.Type != "dll").ToList();
             info.ScriptDependencies = info.Dependencies.Where(af => af.Type == "cs" || af.Type == "dll").ToList();
@@ -96,7 +104,7 @@ namespace AssetInventory
             if (info.DependencyState == DependencyStateOptions.Calculating) info.DependencyState = DependencyStateOptions.Done; // otherwise error along the way
         }
 
-        private async Task<List<AssetFile>> DoCalculateDependencies(AssetInfo info, string path, List<AssetFile> result = null)
+        private async Task<List<AssetFile>> DoCalculateDependencies(AssetInfo info, string path, ConcurrentDictionary<string, bool> processedGuids, List<AssetFile> result = null)
         {
             if (result == null) result = new List<AssetFile>();
 
@@ -116,6 +124,7 @@ namespace AssetInventory
                     af.Type = IOUtils.GetExtensionWithoutDot(file).ToLowerInvariant();
                     af.Size = new FileInfo(file).Length;
 
+                    processedGuids.TryAdd(af.Guid, true);
                     result.Add(af);
                     // TODO: await ScanDependencyResult(info, result, af);
                 }
@@ -129,12 +138,12 @@ namespace AssetInventory
             if (ScanMetaDependencies.Contains(extension))
             {
                 string metaPath = path + ".meta";
-                if (File.Exists(metaPath)) await DoCalculateDependencies(info, metaPath, result);
+                if (File.Exists(metaPath)) await DoCalculateDependencies(info, metaPath, processedGuids, result);
 
                 if (AI.Config.scanFBXDependencies && extension == "fbx")
                 {
                     // also scan for texture references to image files inside the package (embedded materials)
-                    string typeStr = string.Join("\",\"", AI.TypeGroups["Images"]);
+                    string typeStr = string.Join("\",\"", AI.TypeGroups[AI.AssetGroup.Images]);
                     string query = "select * from AssetFile where AssetId = ? and Type in (\"" + typeStr + "\")";
                     List<AssetFile> files = DBAdapter.DB.Query<AssetFile>(query, info.AssetId).ToList();
                     if (files.Count > 0)
@@ -143,7 +152,7 @@ namespace AssetInventory
                         foreach (string embed in embedded)
                         {
                             AssetFile af = files.FirstOrDefault(f => f.FileName == embed);
-                            await AddToResultAndCheckForSRPSupportReplacement(info, result, af);
+                            await AddToResultAndCheckForSRPSupportReplacement(info, result, af, processedGuids);
                         }
                     }
                 }
@@ -190,13 +199,14 @@ namespace AssetInventory
                             {
                                 string includePath = include.StartsWith("Assets") ? include : Path.Combine(Path.GetDirectoryName(curAf.Path), include);
                                 includePath = includePath.Replace("\\", "/");
+                                includePath = IOUtils.NormalizeRelative(includePath);
 
                                 AssetFile af = DBAdapter.DB.Find<AssetFile>(a => a.AssetId == info.AssetId && a.Path == includePath);
                                 if (af == null && info.SRPSupportPackage != null && info.SRPOriginalBackup != null && info.AssetId != info.SRPOriginalBackup.AssetId)
                                 {
                                     af = DBAdapter.DB.Find<AssetFile>(a => a.AssetId == info.SRPOriginalBackup.AssetId && a.Path == includePath);
                                 }
-                                await AddToResultAndCheckForSRPSupportReplacement(info, result, af);
+                                await AddToResultAndCheckForSRPSupportReplacement(info, result, af, processedGuids);
                             }
                         }
                     }
@@ -216,7 +226,7 @@ namespace AssetInventory
                         {
                             af = DBAdapter.DB.Find<AssetFile>(a => a.AssetId == info.SRPOriginalBackup.AssetId && a.FileName == includePath);
                         }
-                        await AddToResultAndCheckForSRPSupportReplacement(info, result, af);
+                        await AddToResultAndCheckForSRPSupportReplacement(info, result, af, processedGuids);
                     }
                 }
             }
@@ -231,7 +241,7 @@ namespace AssetInventory
                 // reserialize prefabs on-the-fly by copying them over which will cause Unity to change the encoding upon refresh
                 // this will not work but throw missing script errors instead if there are any attached
                 string targetDir = Path.Combine(Application.dataPath, AI.TEMP_FOLDER);
-                if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
+                Directory.CreateDirectory(targetDir);
 
                 string targetFile = Path.Combine("Assets", AI.TEMP_FOLDER, Path.GetFileName(path));
                 File.Copy(path, targetFile, true);
@@ -287,20 +297,22 @@ namespace AssetInventory
             }
 
             if (matches == null) matches = FileGuid.Matches(content);
+            List<string> guids = matches.Cast<Match>()
+                .Select(m => m.Groups[1].Value).Distinct()
+                .Where(g => g != info.Guid && !processedGuids.ContainsKey(g)) // ignore self & break recursion
+                .ToList();
+            if (guids.Count == 0) return result;
+            List<AssetFile> afCache = DBAdapter.DB.Table<AssetFile>().Where(a => a.AssetId == info.AssetId && guids.Contains(a.Guid)).ToList();
 
-            foreach (Match match in matches)
+            foreach (string guid in guids)
             {
-                string guid = match.Groups[1].Value;
-                if (result.Any(r => r.Guid == guid)) continue; // break recursion
-                if (guid == info.Guid) continue; // ignore self
-
                 // search strategy:
                 // if there is an SRP package available, check if the dependency is in there and use that one
                 // if not, check if the dependency is in the original package and use that one
                 // if not, check if the dependency is in any other package and use that one
                 AssetFile af = null;
                 if (info.SRPSupportFiles != null) af = info.SRPSupportFiles.FirstOrDefault(f => f.Guid == guid);
-                if (af == null) af = DBAdapter.DB.Find<AssetFile>(a => a.AssetId == info.AssetId && a.Guid == guid);
+                if (af == null) af = afCache.FirstOrDefault(a => a.AssetId == info.AssetId && a.Guid == guid);
                 if (af == null && info.SRPSupportPackage != null && info.AssetId != info.SRPOriginalBackup.AssetId)
                 {
                     af = DBAdapter.DB.Find<AssetFile>(a => a.AssetId == info.SRPOriginalBackup.AssetId && a.Guid == guid);
@@ -311,7 +323,11 @@ namespace AssetInventory
                 if (af == null && AI.Config.allowCrossPackageDependencies)
                 {
                     af = DBAdapter.DB.Find<AssetFile>(a => a.Guid == guid);
-                    if (af == null) continue;
+                    if (af == null)
+                    {
+                        processedGuids.TryAdd(guid, true); // we tried it all, give up
+                        continue;
+                    }
 
                     // break-out to other package
                     Asset crossAsset = null;
@@ -334,7 +350,7 @@ namespace AssetInventory
                 }
 
                 // ignore missing guids as they are not in the package, so we can't do anything about them
-                await AddToResultAndCheckForSRPSupportReplacement(workInfo, result, af);
+                await AddToResultAndCheckForSRPSupportReplacement(workInfo, result, af, processedGuids);
             }
 
             return result.Distinct().ToList();
@@ -372,12 +388,17 @@ namespace AssetInventory
             {
                 // check if there is a URP sub-package available, heuristic by name (some names are like URP-15, URP-16)
                 // check first with version number supplied in case there are numerated packages
-                List<Asset> srpCandidates = DBAdapter.DB.Query<Asset>($"select * from Asset where ParentId=? and Exclude=0 and (SafeName like '%{targetSRP}%' or SafeName like '%{targetSRPAlt}%') "
-                    + (targetSRPVersion != null ? $" and SafeName like '%{targetSRPVersion}%'" : "")
+                List<Asset> srpCandidates = DBAdapter.DB.Query<Asset>("select * from Asset where ParentId=? and Exclude=0 and "
+                    + $"(SafeName like '%{targetSRP}%' or SafeName like '%{targetSRPAlt}%' or DisplayName like '%{targetSRP}%' or DisplayName like '%{targetSRPAlt}%') "
+                    + (targetSRPVersion != null ? $" and (SafeName like '%{targetSRPVersion}%' or DisplayName like '%{targetSRPVersion}%')" : "")
                     + " order by SafeName", info.AssetId);
 
                 // if nothing was found again without version
-                if (srpCandidates.Count == 0) srpCandidates = DBAdapter.DB.Query<Asset>($"select * from Asset where ParentId=? and Exclude=0 and (SafeName like '%{targetSRP}%' or SafeName like '%{targetSRPAlt}%') order by SafeName", info.AssetId);
+                if (srpCandidates.Count == 0)
+                {
+                    srpCandidates = DBAdapter.DB.Query<Asset>("select * from Asset where ParentId=? and Exclude=0 and "
+                        + $"(SafeName like '%{targetSRP}%' or SafeName like '%{targetSRPAlt}%' or DisplayName like '%{targetSRP}%' or DisplayName like '%{targetSRPAlt}%') order by SafeName", info.AssetId);
+                }
                 if (srpCandidates.Count == 0) return;
 
                 if (srpCandidates.Count > 1) Debug.LogWarning($"Multiple potential SRP candidate packages found for package '{info}'. Using last: {string.Join(", ", srpCandidates.Select(a => a.SafeName))}");
@@ -390,7 +411,8 @@ namespace AssetInventory
                 info.CrossPackageDependencies.Add(info.SRPSupportPackage);
             }
 
-            info.SRPSupportFiles = DBAdapter.DB.Query<AssetFile>("select * from AssetFile where AssetId=?", info.SRPSupportPackage.Id);
+            // Use parameterized query for SRP support files
+            info.SRPSupportFiles = DBAdapter.DB.Query<AssetFile>("SELECT * FROM AssetFile WHERE AssetId=?", info.SRPSupportPackage.Id);
 
             // check main file as well, some packages have dedicated prefabs etc.
             AssetFile srpFile = info.SRPSupportFiles.FirstOrDefault(f => f.Guid == info.Guid);
@@ -401,10 +423,9 @@ namespace AssetInventory
             }
         }
 
-        private async Task AddToResultAndCheckForSRPSupportReplacement(AssetInfo info, List<AssetFile> result, AssetFile af)
+        private async Task AddToResultAndCheckForSRPSupportReplacement(AssetInfo info, List<AssetFile> result, AssetFile af, ConcurrentDictionary<string, bool> processedGuids)
         {
-            if (af == null) return;
-            if (result.Any(r => r.Guid == af.Guid)) return;
+            if (af == null || af.Guid == null || processedGuids.ContainsKey(af.Guid)) return;
 
             // check if there is an URP file with matching GUID and replace the original dependency with that one
             if (info.SRPSupportFiles != null && af.AssetId != info.SRPSupportPackage.Id)
@@ -417,12 +438,13 @@ namespace AssetInventory
                 }
             }
 
+            processedGuids.TryAdd(af.Guid, true);
             result.Add(af);
 
-            await ScanDependencyResult(info, result, af);
+            await ScanDependencyResult(info, result, af, processedGuids);
         }
 
-        private async Task ScanDependencyResult(AssetInfo info, List<AssetFile> result, AssetFile af)
+        private async Task ScanDependencyResult(AssetInfo info, List<AssetFile> result, AssetFile af, ConcurrentDictionary<string, bool> processedGuids)
         {
             AssetInfo workInfo = info;
 
@@ -443,26 +465,26 @@ namespace AssetInventory
             if (targetPath == null)
             {
                 Debug.LogWarning($"Could not materialize dependency: {af.Path}");
+                processedGuids.TryAdd(af.Guid, true);
                 return;
             }
 
-            await DoCalculateDependencies(workInfo, targetPath, result);
+            await DoCalculateDependencies(workInfo, targetPath, processedGuids, result);
 
             // carry over results set during calculation
             if (workInfo.SRPUsed) info.SRPUsed = true;
             info.DependencyState = workInfo.DependencyState;
-            workInfo.CrossPackageDependencies.ForEach(d =>
+            foreach (Asset d in workInfo.CrossPackageDependencies)
             {
                 if (!info.CrossPackageDependencies.Any(p => p.Id == d.Id)) info.CrossPackageDependencies.Add(d);
-            });
+            }
         }
 
         private HashSet<string> FindIncludeFiles(string shaderCode, bool returnPackageReferences = false)
         {
             HashSet<string> result = new HashSet<string>();
-            string includePattern = @"#include\s*""(.+?)"""; // Regex to match include lines and capture file names
 
-            MatchCollection matches = Regex.Matches(shaderCode, includePattern);
+            MatchCollection matches = IncludeFilesRegex.Matches(shaderCode);
             foreach (Match match in matches)
             {
                 if (match.Success)
@@ -480,9 +502,8 @@ namespace AssetInventory
         private List<string> FindCustomEditors(string shaderCode)
         {
             List<string> result = new List<string>();
-            string customEditorPattern = @"CustomEditor\s*""(.+?)"""; // Regex to match custom editor lines and capture names
 
-            MatchCollection matches = Regex.Matches(shaderCode, customEditorPattern);
+            MatchCollection matches = CustomEditorRegex.Matches(shaderCode);
             foreach (Match match in matches)
             {
                 if (match.Success)
@@ -498,7 +519,6 @@ namespace AssetInventory
         private static void ScanMetaFiles()
         {
             string[] packages = Directory.GetFiles(AI.GetMaterializeFolder(), "*.meta", SearchOption.AllDirectories);
-            AI.MainCount = packages.Length;
             for (int i = 0; i < packages.Length; i++)
             {
                 string content = File.ReadAllText(packages[i]);

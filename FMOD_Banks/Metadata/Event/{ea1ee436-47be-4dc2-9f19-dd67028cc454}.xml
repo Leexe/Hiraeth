@@ -2,13 +2,13 @@
 <objects serializationModel="Studio.02.03.00">
 	<object class="Event" id="{ea1ee436-47be-4dc2-9f19-dd67028cc454}">
 		<property name="name">
-			<value>Dash Roll (Hireath)</value>
+			<value>Dash Roll</value>
 		</property>
 		<property name="outputFormat">
-			<value>2</value>
+			<value>1</value>
 		</property>
 		<relationship name="folder">
-			<destination>{04a6e5cf-98df-4465-9e4c-8121928012eb}</destination>
+			<destination>{499b7ac4-09ae-4217-870a-0a270c8e23dd}</destination>
 		</relationship>
 		<relationship name="mixer">
 			<destination>{f3113886-0be3-4928-b74a-b6b3da609a7a}</destination>
@@ -54,7 +54,7 @@
 			<destination>{2790cb01-ec5d-4f71-9192-f534deade906}</destination>
 		</relationship>
 		<relationship name="output">
-			<destination>{054981bc-4193-4069-ad6b-44f061e7560c}</destination>
+			<destination>{c7feec53-90ac-44e3-96e5-84f9b843aea1}</destination>
 		</relationship>
 	</object>
 	<object class="EventAutomatableProperties" id="{dc19ee3d-52da-45ac-beb5-618d4498e184}" />
@@ -110,9 +110,6 @@
 		</relationship>
 	</object>
 	<object class="EventMixerGroup" id="{44370e94-7938-486f-8fe0-035e761e8344}">
-		<property name="volume">
-			<value>-7.5</value>
-		</property>
 		<property name="name">
 			<value>Audio 1</value>
 		</property>
@@ -141,9 +138,6 @@
 		</relationship>
 	</object>
 	<object class="EventMixerGroup" id="{ba028ee9-2134-480e-81b8-b7bf92929603}">
-		<property name="volume">
-			<value>-6.5</value>
-		</property>
 		<property name="name">
 			<value>Audio 2</value>
 		</property>
@@ -160,7 +154,7 @@
 	<object class="MixerBusEffectChain" id="{423519ff-391c-46f3-b7d2-3cb93b7d74dd}">
 		<relationship name="effects">
 			<destination>{e16c3cec-a3af-427f-9835-49df9ca675b0}</destination>
-			<destination>{24abba48-4285-45e7-8dd8-3269dad91562}</destination>
+			<destination>{28312229-e97c-4eac-b5e9-604819c6af70}</destination>
 		</relationship>
 	</object>
 	<object class="MixerBusPanner" id="{38764084-ff7e-4b42-b17c-8c7ef285c400}" />
@@ -194,7 +188,17 @@
 	</object>
 	<object class="MixerBusPanner" id="{d749fcb6-73cc-48dc-914b-7fac9a764d35}" />
 	<object class="MixerBusFader" id="{e16c3cec-a3af-427f-9835-49df9ca675b0}" />
-	<object class="SpatialiserEffect" id="{24abba48-4285-45e7-8dd8-3269dad91562}" />
+	<object class="MixerSend" id="{28312229-e97c-4eac-b5e9-604819c6af70}">
+		<property name="level">
+			<value>-16</value>
+		</property>
+		<property name="inputFormat">
+			<value>1</value>
+		</property>
+		<relationship name="mixerReturn">
+			<destination>{cc03a880-37a3-4afc-8ea5-c742c1f1beeb}</destination>
+		</relationship>
+	</object>
 	<object class="MixerBusFader" id="{67c51eb5-9c64-4254-bc98-fb07554b18eb}" />
 	<object class="MixerBusFader" id="{67fe00e2-7bbe-4f8d-bd54-f167f0703fbe}" />
 </objects>

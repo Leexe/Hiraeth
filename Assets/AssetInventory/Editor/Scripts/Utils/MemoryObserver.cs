@@ -26,7 +26,8 @@ namespace AssetInventory
 
             if (!Enabled || _targetSize == 0 || _curSize < _targetSize || (DateTime.Now - _lastClean).TotalMinutes < _interval) return;
             EditorUtility.UnloadUnusedAssetsImmediate();
-
+            GC.Collect();
+            
             _lastClean = DateTime.Now;
             _curSize = 0;
         }

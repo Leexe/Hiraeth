@@ -68,14 +68,14 @@ namespace AssetInventory
             }
             else
 #endif
-            if (AI.IsFileType(info.FileName, "Fonts"))
+            if (AI.IsFileType(info.FileName, AI.AssetGroup.Fonts))
             {
                 PreviewRequest req = UnityPreviewGenerator.Localize(info.Id, sourcePath, previewFile);
                 texture = FontPreviewGenerator.Create(req.TempFileRel, AI.Config.upscaleSize);
                 directPreview = true;
             }
 #if UNITY_EDITOR_WIN
-            else if (AI.IsFileType(info.FileName, "Videos"))
+            else if (AI.IsFileType(info.FileName, AI.AssetGroup.Videos))
             {
                 PreviewRequest req = UnityPreviewGenerator.Localize(info.Id, sourcePath, previewFile);
 
@@ -104,7 +104,11 @@ namespace AssetInventory
                 if (DependencyAnalysis.NeedsScan(info.Type))
                 {
                     if (info.DependencyState == AssetInfo.DependencyStateOptions.Unknown) await AI.CalculateDependencies(info);
-                    if (info.Dependencies.Count > 0 || info.SRPMainReplacement != null) sourcePath = await AI.CopyTo(info, UnityPreviewGenerator.GetPreviewWorkFolder(), true);
+                    if (info.Dependencies.Count > 0 || info.SRPMainReplacement != null)
+                    {
+                        // ensure to remove ~ from folders (sampleflag) as otherwise unity will not generate previews 
+                        sourcePath = await AI.CopyTo(info, UnityPreviewGenerator.GetPreviewWorkFolder(), true, false, false, false, false, true);
+                    }
                     if (sourcePath == null) // can happen when file system issues occur
                     {
                         if (info.PreviewState != AssetFile.PreviewOptions.Provided)
@@ -116,18 +120,26 @@ namespace AssetInventory
                     }
                 }
 
-                UnityPreviewGenerator.RegisterPreviewRequest(info.Id, sourcePath, previewFile, req =>
+                if (!UnityPreviewGenerator.RegisterPreviewRequest(info.Id, sourcePath, previewFile, req =>
+                    {
+                        StorePreviewResult(req);
+                        if (req.Icon != null)
+                        {
+                            onCreated?.Invoke();
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"Unity did not return any preview image for '{info.FileName}'.");
+                        }
+                    }, info.Dependencies?.Count > 0))
                 {
-                    StorePreviewResult(req);
-                    if (req.Icon != null)
+                    if (info.PreviewState != AssetFile.PreviewOptions.Provided)
                     {
-                        onCreated?.Invoke();
+                        info.PreviewState = AssetFile.PreviewOptions.Error;
+                        DBAdapter.DB.Execute("update AssetFile set PreviewState=? where Id=?", AssetFile.PreviewOptions.Error, info.Id);
                     }
-                    else
-                    {
-                        Debug.LogError($"Unity did not return any preview image for '{info.FileName}'.");
-                    }
-                }, info.Dependencies?.Count > 0);
+                    return false;
+                }
 
                 await EnsureProgress();
             }
@@ -150,8 +162,10 @@ namespace AssetInventory
 #else
                         File.WriteAllBytes(animPreviewFile, animTexture.EncodeToPNG());
 #endif
+                        UnityEngine.Object.DestroyImmediate(animTexture);
                     }
 
+                    UnityEngine.Object.DestroyImmediate(texture);
                     return true;
                 }
                 if (info.PreviewState != AssetFile.PreviewOptions.Provided)
@@ -171,25 +185,25 @@ namespace AssetInventory
             {
                 if (includeComplex)
                 {
-                    previewable = AI.IsFileType(file, "Audio")
-                        || AI.IsFileType(file, "Images")
+                    previewable = AI.IsFileType(file, AI.AssetGroup.Audio)
+                        || AI.IsFileType(file, AI.AssetGroup.Images)
 #if UNITY_EDITOR_WIN
-                        || AI.IsFileType(file, "Videos")
+                        || AI.IsFileType(file, AI.AssetGroup.Videos)
 #endif
-                        || AI.IsFileType(file, "Models")
-                        || AI.IsFileType(file, "Fonts")
-                        || AI.IsFileType(file, "Prefabs")
-                        || AI.IsFileType(file, "Materials");
+                        || AI.IsFileType(file, AI.AssetGroup.Models)
+                        || AI.IsFileType(file, AI.AssetGroup.Fonts)
+                        || AI.IsFileType(file, AI.AssetGroup.Prefabs)
+                        || AI.IsFileType(file, AI.AssetGroup.Materials);
                 }
                 else
                 {
-                    previewable = AI.IsFileType(file, "Audio")
-                        || AI.IsFileType(file, "Images")
+                    previewable = AI.IsFileType(file, AI.AssetGroup.Audio)
+                        || AI.IsFileType(file, AI.AssetGroup.Images)
 #if UNITY_EDITOR_WIN
-                        || AI.IsFileType(file, "Videos")
+                        || AI.IsFileType(file, AI.AssetGroup.Videos)
 #endif
-                        || AI.IsFileType(file, "Fonts")
-                        || AI.IsFileType(file, "Models");
+                        || AI.IsFileType(file, AI.AssetGroup.Fonts)
+                        || AI.IsFileType(file, AI.AssetGroup.Models);
                 }
             }
             if (!previewable && autoMarkNA != null)

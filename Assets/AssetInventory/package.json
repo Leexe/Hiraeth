@@ -1,8 +1,8 @@
 {
   "name": "com.wetzold.asset-inventory",
-  "displayName": "Asset Inventory 2",
-  "description": "Your asset companion: a lightning-fast search for assets OUTSIDE your current project. Find content in assets you purchased or downloaded WITHOUT IMPORTING and bring them in with a single click.",
-  "version": "2.7.0",
+  "displayName": "Asset Inventory",
+  "description": "Your asset companion: a lightning-fast search for assets outside your current project. Find content in assets you purchased or downloaded without importing and bring them in with a single click.",
+  "version": "3.0.0",
   "unity": "2020.3",
   "keywords": [
     "asset",

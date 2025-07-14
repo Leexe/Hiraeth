@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects serializationModel="Studio.02.03.00">
+	<object class="AudioFile" id="{6ea17851-9fb1-4f66-9fab-5a7cd4e31e0a}">
+		<property name="assetPath">
+			<value>Wall Jump (Hiraeth).wav</value>
+		</property>
+		<property name="frequencyInKHz">
+			<value>44.0999985</value>
+		</property>
+		<property name="channelCount">
+			<value>2</value>
+		</property>
+		<property name="length">
+			<value>0.28845804988662133</value>
+		</property>
+		<relationship name="masterAssetFolder">
+			<destination>{0cdd2f33-06a0-45b2-9792-4f5887acd8b3}</destination>
+		</relationship>
+	</object>
+</objects>

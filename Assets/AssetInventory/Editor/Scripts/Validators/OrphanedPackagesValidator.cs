@@ -19,7 +19,7 @@ namespace AssetInventory
 
             await Task.Yield();
 
-            DBIssues = AI.LoadAssets().Where(a => a.AssetSource != Asset.Source.AssetStorePackage && a.AssetSource != Asset.Source.RegistryPackage && !a.IsDownloaded).ToList();
+            DBIssues = AI.LoadAssets().Where(a => a.ParentId == 0 && a.AssetSource != Asset.Source.AssetStorePackage && a.AssetSource != Asset.Source.RegistryPackage && !a.IsDownloaded).ToList();
 
             CurrentState = State.Completed;
         }

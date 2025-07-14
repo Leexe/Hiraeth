@@ -15,12 +15,8 @@ namespace AssetInventory
 {
     public sealed class AssetManagerImporter : AssetImporter
     {
-        public async Task Index(Asset forAsset = null)
+        public async Task Run(Asset forAsset = null)
         {
-            ResetState(false);
-
-            int progressId = MetaProgress.Start("Updating Asset Manager index");
-
 #if USE_ASSET_MANAGER && USE_CLOUD_IDENTITY
             CloudAssetManagement cam = await AI.GetCloudAssetManagement();
             await cam.GetOrganizationsAsync();
@@ -33,7 +29,9 @@ namespace AssetInventory
 
                     cam.SetSelectedOrganization(organization);
                     await cam.GetProjectsAsync();
-
+                    
+                    MainCount = cam.AvailableProjects.Count;
+                    MainProgress = 0;
                     for (int i = 0; i < cam.AvailableProjects.Count; i++)
                     {
                         if (CancellationRequested) break;
@@ -41,10 +39,7 @@ namespace AssetInventory
                         IAssetProject project = cam.AvailableProjects[i];
                         IProject projectAlt = cam.AvailableProjectsAlt.FirstOrDefault(p => p.Descriptor.ProjectId == project.Descriptor.ProjectId);
 
-                        CurrentMain = $"Processing project {project.Name} ({organization.Name})...";
-                        MainCount = cam.AvailableProjects.Count;
-                        MainProgress = i + 1;
-                        MetaProgress.Report(progressId, i + 1, MainCount, project.Name);
+                        SetProgress($"{project.Name} ({organization.Name})...", i + 1);
 
                         Asset asset = new Asset();
                         asset.AssetSource = Asset.Source.AssetManager;
@@ -93,24 +88,27 @@ namespace AssetInventory
 
                         Persist(asset);
 
-                        await IndexCollections(cam, asset);
+                        AssetManagerImporter assetManagerImporter = new AssetManagerImporter();
+                        AI.Actions.RegisterRunningAction(ActionHandler.ACTION_ASSET_MANAGER_COLLECTION_INDEX, assetManagerImporter, "Indexing Collections");
+                        await assetManagerImporter.IndexCollections(cam, asset);
+                        assetManagerImporter.FinishProgress();
                     }
                 }
             }
 #else
             await Task.Yield();
 #endif
-            MetaProgress.Remove(progressId);
-            ResetState(true);
         }
 
 #if USE_ASSET_MANAGER && USE_CLOUD_IDENTITY
-        public static async Task PersistAssetFiles(CloudAssetManagement cam, List<IAsset> assets, Asset asset, bool checkOrphans = true)
+        public async Task PersistAssetFiles(CloudAssetManagement cam, List<IAsset> assets, Asset asset, bool checkOrphans = true)
         {
             bool tagsChanged = false;
 
             List<AssetFile> orphanedFiles = new List<AssetFile>();
             if (checkOrphans) orphanedFiles = DBAdapter.DB.Query<AssetFile>("select * from AssetFile where AssetId = ?", asset.Id);
+
+            SubCount = assets.Count;
             for (int i2 = 0; i2 < assets.Count; i2++)
             {
                 if (CancellationRequested) break;
@@ -118,7 +116,6 @@ namespace AssetInventory
                 IAsset cloudAsset = assets[i2];
 
                 CurrentSub = IOUtils.RemoveInvalidChars(cloudAsset.Name);
-                SubCount = assets.Count;
                 SubProgress = i2;
 
                 AssetFile af = new AssetFile();
@@ -171,7 +168,7 @@ namespace AssetInventory
                 // add tags
                 foreach (string tag in cloudAsset.Tags)
                 {
-                    if (Tagging.AddTagAssignment(af.Id, tag, TagAssignment.Target.Asset, true)) tagsChanged = true;
+                    if (Tagging.AddAssignment(af.Id, tag, TagAssignment.Target.Asset, true)) tagsChanged = true;
                 }
             }
             if (checkOrphans && orphanedFiles.Count > 0)
@@ -181,9 +178,9 @@ namespace AssetInventory
             if (tagsChanged)
             {
                 Tagging.LoadTags();
-                Tagging.LoadTagAssignments();
+                Tagging.LoadAssignments();
             }
-            SubCount = 0;
+            CurrentSub = null;
         }
 
         private async Task IndexCollections(CloudAssetManagement cam, Asset parent)
@@ -193,15 +190,14 @@ namespace AssetInventory
 
             Dictionary<string, int> assetMapping = new Dictionary<string, int>();
 
+            MainCount = cam.AssetCollections.Count;
             for (int i = 0; i < cam.AssetCollections.Count; i++)
             {
                 if (CancellationRequested) break;
 
                 IAssetCollection collection = cam.AssetCollections[i];
 
-                CurrentMain = $"Processing collection {collection.Descriptor.Path.ToString().Replace("/", "-")}...";
-                MainCount = cam.AssetCollections.Count;
-                MainProgress = i + 1;
+                SetProgress($"{collection.Descriptor.Path.ToString().Replace("/", "-")}...", i + 1);
 
                 string parentPath = collection.ParentPath.ToString();
 
@@ -245,7 +241,7 @@ namespace AssetInventory
             orphaned.ForEach(a => AI.RemovePackage(new AssetInfo(a), false));
         }
 
-        private static async void FetchPreview(IAsset cloudAsset, AssetFile af)
+        private async void FetchPreview(IAsset cloudAsset, AssetFile af)
         {
             if (af.PreviewState == AssetFile.PreviewOptions.Error) return;
             string targetFile = af.GetPreviewFile(AI.GetPreviewFolder());

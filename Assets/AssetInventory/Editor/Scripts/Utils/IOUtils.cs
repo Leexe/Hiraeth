@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 #if UNITY_2021_2_OR_NEWER
 using SharpCompress.Archives;
 using SharpCompress.Common;
+using SharpCompress.Writers;
+using CompressionType = SharpCompress.Common.CompressionType;
 #endif
 using UnityEditor;
 using UnityEngine;
@@ -20,6 +22,60 @@ namespace AssetInventory
     public static class IOUtils
     {
         private const string LONG_PATH_PREFIX = @"\\?\";
+
+        public static DriveInfo GetDriveInfoForPath(string folderPath)
+        {
+            if (string.IsNullOrEmpty(folderPath)) return null;
+
+            folderPath = Path.GetFullPath(folderPath);
+            DriveInfo bestMatch = null;
+
+            foreach (DriveInfo drive in DriveInfo.GetDrives())
+            {
+                string root = drive.RootDirectory.FullName;
+                if (folderPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (bestMatch == null || root.Length > bestMatch.RootDirectory.FullName.Length)
+                    {
+                        bestMatch = drive;
+                    }
+                }
+            }
+            if (bestMatch == null) Debug.LogError($"No drive found for the given path: {folderPath}");
+
+            return bestMatch;
+        }
+
+        public static bool IsSameDrive(string path1, string path2)
+        {
+            DriveInfo drive1 = GetDriveInfoForPath(path1);
+            DriveInfo drive2 = GetDriveInfoForPath(path2);
+            return string.Equals(drive1.Name, drive2.Name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static long GetFreeSpace(string folderPath)
+        {
+            DriveInfo drive = GetDriveInfoForPath(folderPath);
+            return drive.AvailableFreeSpace;
+        }
+
+        public static string NormalizeRelative(string path)
+        {
+            string[] parts = path.Split(new[] {'/', '\\'}, StringSplitOptions.RemoveEmptyEntries);
+            Stack<string> stack = new Stack<string>();
+            foreach (string part in parts)
+            {
+                if (part == "..")
+                {
+                    stack.Pop();
+                }
+                else if (part != ".")
+                {
+                    stack.Push(part);
+                }
+            }
+            return string.Join("/", stack.Reverse());
+        }
 
         public static string ToLongPath(string path)
         {
@@ -71,6 +127,15 @@ namespace AssetInventory
             return tempDirectoryPath;
         }
 
+        public static string CreateTempFolder(string name, bool deleteIfExists = false)
+        {
+            string tempDirectoryPath = Path.Combine(Path.GetTempPath(), name);
+            if (deleteIfExists && Directory.Exists(tempDirectoryPath)) Directory.Delete(tempDirectoryPath, true);
+            if (!Directory.Exists(tempDirectoryPath)) Directory.CreateDirectory(tempDirectoryPath);
+
+            return tempDirectoryPath;
+        }
+
         public static async Task<List<string>> FindMatchesInBinaryFile(string filePath, List<string> searchStrings, int bufferSize = 1048576)
         {
             HashSet<string> foundMatches = new HashSet<string>();
@@ -78,34 +143,41 @@ namespace AssetInventory
 
             using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, true))
             {
-                int bytesRead;
                 List<Task> searchTasks = new List<Task>();
                 StringBuilder chunk = new StringBuilder();
 
-                while ((bytesRead = await fs.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                try
                 {
-                    chunk.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
-
-                    string chunkContent = chunk.ToString();
-
-                    searchTasks.Add(Task.Run(() =>
+                    int bytesRead;
+                    while ((bytesRead = await fs.ReadAsync(buffer, 0, buffer.Length)) > 0)
                     {
-                        Parallel.ForEach(searchStrings, searchString =>
+                        chunk.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+
+                        string chunkContent = chunk.ToString();
+
+                        searchTasks.Add(Task.Run(() =>
                         {
-                            if (chunkContent.IndexOf(searchString, StringComparison.Ordinal) >= 0)
+                            Parallel.ForEach(searchStrings, searchString =>
                             {
-                                lock (foundMatches)
+                                if (chunkContent.IndexOf(searchString, StringComparison.Ordinal) >= 0)
                                 {
-                                    foundMatches.Add(searchString);
+                                    lock (foundMatches)
+                                    {
+                                        foundMatches.Add(searchString);
+                                    }
                                 }
-                            }
-                        });
-                    }));
+                            });
+                        }));
 
-                    if (chunk.Length > bufferSize * 2)
-                    {
-                        chunk.Remove(0, chunk.Length - bufferSize);
+                        if (chunk.Length > bufferSize * 2)
+                        {
+                            chunk.Remove(0, chunk.Length - bufferSize);
+                        }
                     }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"Error reading binary file '{filePath}': {e.Message}");
                 }
 
                 await Task.WhenAll(searchTasks);
@@ -175,13 +247,14 @@ namespace AssetInventory
             }
         }
 
-        public static async Task DeleteFileOrDirectory(string path, int retries = 3)
+        public static async Task<bool> DeleteFileOrDirectory(string path, int retries = 3)
         {
+            bool success = false;
             while (retries >= 0)
             {
                 try
                 {
-                    FileUtil.DeleteFileOrDirectory(path); // use Unity method to circumvent unauthorized access that can happen every now and then
+                    success = FileUtil.DeleteFileOrDirectory(path); // use Unity method to circumvent unauthorized access that can happen every now and then
                     break;
                 }
                 catch
@@ -190,6 +263,8 @@ namespace AssetInventory
                     if (retries >= 0) await Task.Delay(200);
                 }
             }
+
+            return success;
         }
 
         // Regex version
@@ -203,6 +278,8 @@ namespace AssetInventory
         // Takes multiple patterns and executes in parallel
         public static IEnumerable<string> GetFiles(string path, IEnumerable<string> searchPatterns, SearchOption searchOption = SearchOption.TopDirectoryOnly)
         {
+            if (path == null) return Enumerable.Empty<string>();
+
             return searchPatterns.AsParallel()
                 .SelectMany(searchPattern => Directory.EnumerateFiles(path, searchPattern, searchOption));
         }
@@ -257,6 +334,7 @@ namespace AssetInventory
 
         public static bool IsDirectoryEmpty(string path)
         {
+            if (path == null) return true;
             return !Directory.EnumerateFileSystemEntries(path).Any();
         }
 
@@ -272,13 +350,13 @@ namespace AssetInventory
         {
             DirectoryInfo dir = new DirectoryInfo(sourceDir);
             DirectoryInfo[] dirs = dir.GetDirectories();
-            if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
+            Directory.CreateDirectory(destDir);
 
             FileInfo[] files = dir.GetFiles();
             foreach (FileInfo file in files)
             {
                 string tempPath = Path.Combine(destDir, file.Name);
-                file.CopyTo(tempPath, false);
+                file.CopyTo(tempPath, true);
             }
 
             if (includeSubDirs)
@@ -319,13 +397,14 @@ namespace AssetInventory
             return Path.GetFullPath(Path.Combine(path));
         }
 
-        public static string ExecuteCommand(string command, string arguments)
+        public static string ExecuteCommand(string command, string arguments, string workingDirectory = "", bool waitForExit = true, bool createWindow = false)
         {
             ProcessStartInfo processStartInfo = new ProcessStartInfo(command, arguments)
             {
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                RedirectStandardOutput = !createWindow,
+                UseShellExecute = createWindow,
+                CreateNoWindow = !createWindow,
+                WorkingDirectory = workingDirectory
             };
 
             try
@@ -333,8 +412,9 @@ namespace AssetInventory
                 using (Process process = new Process {StartInfo = processStartInfo})
                 {
                     process.Start();
-                    string result = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
+                    string result = null;
+                    if (!createWindow) result = process.StandardOutput.ReadToEnd();
+                    if (waitForExit) process.WaitForExit();
                     return result;
                 }
             }
@@ -369,10 +449,41 @@ namespace AssetInventory
         }
 #endif
 
+        public static bool IsFirstArchiveVolume(string file)
+        {
+            string fileName = Path.GetFileName(file).ToLowerInvariant();
+            if (fileName.EndsWith(".rar"))
+            {
+                Match match = Regex.Match(fileName, @"\.part(\d+)\.rar$");
+                if (match.Success)
+                {
+                    int partNumber = int.Parse(match.Groups[1].Value);
+                    return partNumber == 1;
+                }
+                return true;
+            }
+            return true;
+        }
+
 #if UNITY_2021_2_OR_NEWER
+        public static void CompressFolder(string source, string target)
+        {
+            using FileStream zipStream = File.Create(target);
+            WriterOptions options = new WriterOptions(CompressionType.Deflate);
+            using IWriter writer = WriterFactory.Open(zipStream, ArchiveType.Zip, options);
+            writer.WriteAll(source, "*", SearchOption.AllDirectories);
+        }
+
+        public static void CreateEmptyZip(string zipPath)
+        {
+            using FileStream zipStream = File.Create(zipPath);
+            using IWriter writer = WriterFactory.Open(zipStream, ArchiveType.Zip, new WriterOptions(CompressionType.Deflate));
+            // No entries added: creates an empty zip.
+        }
+
         public static bool ExtractArchive(string archiveFile, string targetFolder)
         {
-            if (!Directory.Exists(targetFolder)) Directory.CreateDirectory(targetFolder);
+            Directory.CreateDirectory(targetFolder);
 
             try
             {
@@ -384,22 +495,37 @@ namespace AssetInventory
 
                         if (!entry.IsDirectory)
                         {
-                            string fullOutputPath = Path.Combine(targetFolder, entry.Key);
-                            string directoryName = Path.GetDirectoryName(fullOutputPath);
-                            if (!Directory.Exists(directoryName)) Directory.CreateDirectory(directoryName);
-
-                            entry.WriteToDirectory(targetFolder, new ExtractionOptions
+                            try
                             {
-                                Overwrite = true,
-                                ExtractFullPath = true
-                            });
+                                string fullOutputPath = Path.Combine(targetFolder, entry.Key);
+                                string directoryName = Path.GetDirectoryName(fullOutputPath);
+                                Directory.CreateDirectory(directoryName);
+
+                                entry.WriteToDirectory(targetFolder, new ExtractionOptions
+                                {
+                                    Overwrite = true,
+                                    ExtractFullPath = true
+                                });
+                            }
+                            catch (Exception e)
+                            {
+                                if (e is ArgumentException || e is IOException)
+                                {
+                                    // can happen for paths containing : and other illegal characters
+                                    Debug.LogWarning($"Could not extract file '{entry.Key}' from archive '{archiveFile}': {e.Message}");
+                                }
+                                else
+                                {
+                                    throw;
+                                }
+                            }
                         }
                     }
                 }
             }
             catch (Exception e)
             {
-                Debug.LogError($"Could not extract file from archive '{archiveFile}'. The process was potentially interrupted, the file is corrupted or the path too long: {e.Message}");
+                Debug.LogError($"Could not extract archive '{archiveFile}'. The process was potentially interrupted, the file is corrupted or the path too long: {e.Message}");
                 return false;
             }
 

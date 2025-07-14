@@ -23,7 +23,7 @@ namespace AssetInventory
             await Task.Yield();
 
             // query all asset files that do not have an asset id that is contained in the asset table
-            string query = "select * from AssetFile where Length = 0 and Type in ('" + string.Join("','", AI.TypeGroups["Audio"]) + "')";
+            string query = "select * from AssetFile where Length = 0 and Type in ('" + string.Join("','", AI.TypeGroups[AI.AssetGroup.Audio]) + "')";
             DBIssues = DBAdapter.DB.Query<AssetInfo>(query);
 
             CurrentState = State.Completed;
@@ -33,7 +33,7 @@ namespace AssetInventory
         {
             CurrentState = State.Fixing;
 
-            string audioTypes = "'" + string.Join("','", AI.TypeGroups["Audio"]) + "'";
+            string audioTypes = "'" + string.Join("','", AI.TypeGroups[AI.AssetGroup.Audio]) + "'";
 
             List<AssetInfo> assets = DBAdapter.DB.Query<AssetInfo>($"select Distinct(AssetId) from AssetFile where Length = 0 and Type in ({audioTypes})");
             string affectedPackages = string.Join(",", assets.Select(a => a.AssetId));

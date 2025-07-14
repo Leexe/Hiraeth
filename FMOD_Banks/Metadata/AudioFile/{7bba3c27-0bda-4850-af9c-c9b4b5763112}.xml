@@ -2,7 +2,7 @@
 <objects serializationModel="Studio.02.03.00">
 	<object class="AudioFile" id="{7bba3c27-0bda-4850-af9c-c9b4b5763112}">
 		<property name="assetPath">
-			<value>Dash (Hireath).wav</value>
+			<value>Dash (Hiraeth).wav</value>
 		</property>
 		<property name="frequencyInKHz">
 			<value>44.0999985</value>

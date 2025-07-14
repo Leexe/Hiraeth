@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+#if (UNITY_2021_3_OR_NEWER && !USE_TUTORIALS) || !USE_VECTOR_GRAPHICS 
+using UnityEditor.PackageManager;
+#endif
 using UnityEditorInternal;
 using UnityEngine;
 
@@ -16,7 +19,6 @@ namespace AssetInventory
         private Vector2 _settingsScrollPos;
 
         private bool _showMaintenance;
-        private bool _showLocations;
         private bool _showDiskSpace;
         private long _dbSize;
         private long _backupSize;
@@ -26,6 +28,7 @@ namespace AssetInventory
         private string _captionTest = "-no caption created yet-";
         private bool _legacyCacheLocationFound;
 
+        // additional folders
         private sealed class AdditionalFoldersWrapper : ScriptableObject
         {
             public List<FolderSpec> folders = new List<FolderSpec>();
@@ -39,7 +42,6 @@ namespace AssetInventory
                 return _folderListControl;
             }
         }
-
         private ReorderableList _folderListControl;
 
         private SerializedObject SerializedFoldersObject
@@ -51,13 +53,129 @@ namespace AssetInventory
                 return _serializedFoldersObject;
             }
         }
-
         private SerializedObject _serializedFoldersObject;
         private SerializedProperty _foldersProperty;
+        private int _selectedFolderIndex = -1;
+        private int _selectedUpdateActionIndex = -1;
+
+        // update actions
+        private sealed class UpdateActionsWrapper : ScriptableObject
+        {
+            public List<UpdateAction> actions = new List<UpdateAction>();
+        }
+
+        private ReorderableList UpdateActionsControl
+        {
+            get
+            {
+                if (_updateActionsControl == null) InitUpdateActions();
+                return _updateActionsControl;
+            }
+        }
+        private ReorderableList _updateActionsControl;
+
+        private SerializedObject SerializedUpdateActionsObject
+        {
+            get
+            {
+                // reference can become null on reload
+                if (_serializedUpdateActionsObject == null || _serializedUpdateActionsObject.targetObjects.FirstOrDefault() == null) InitUpdateActions();
+                return _serializedUpdateActionsObject;
+            }
+        }
+        private SerializedObject _serializedUpdateActionsObject;
+        private SerializedProperty _updateActionsProperty;
 
         private bool _calculatingFolderSizes;
         private bool _cleanupInProgress;
         private DateTime _lastFolderSizeCalculation;
+
+        private void InitUpdateActions()
+        {
+            UpdateActionsWrapper obj = CreateInstance<UpdateActionsWrapper>();
+            obj.actions = AI.Actions.Actions.Where(a => !a.hidden).ToList();
+
+            _serializedUpdateActionsObject = new SerializedObject(obj);
+            _updateActionsProperty = _serializedUpdateActionsObject.FindProperty("actions");
+            _updateActionsControl = new ReorderableList(_serializedUpdateActionsObject, _updateActionsProperty, false, true, false, false);
+            _updateActionsControl.drawElementCallback = DrawUpdateActionItem;
+            _updateActionsControl.drawHeaderCallback = rect =>
+            {
+                EditorGUI.LabelField(rect, "Actions to Perform" + (AI.Actions.ActionsInProgress ? $" (Started {StringUtils.GetRelativeTimeDifference(AI.Actions.GetFirstActionStart())})" : ""));
+                if (GUI.Button(new Rect(rect.x + rect.width - 155, rect.y, 35, 20), "All", EditorStyles.miniButton))
+                {
+                    AI.Actions.SetAllActive(true);
+                }
+                if (GUI.Button(new Rect(rect.x + rect.width - 115, rect.y, 60, 20), "Default", EditorStyles.miniButton))
+                {
+                    AI.Actions.SetDefaultActive();
+                }
+                if (GUI.Button(new Rect(rect.x + rect.width - 50, rect.y, 50, 20), "None", EditorStyles.miniButton))
+                {
+                    AI.Actions.SetAllActive(false);
+                }
+            };
+            _updateActionsControl.displayAdd = true;
+            _updateActionsControl.displayRemove = true;
+            _updateActionsControl.onAddCallback = _ =>
+            {
+                NameUI nameUI = new NameUI();
+                nameUI.Init("My Action", CreateAction);
+                PopupWindow.Show(new Rect(Event.current.mousePosition.x, Event.current.mousePosition.y, 0, 0), nameUI);
+            };
+            _updateActionsControl.onCanRemoveCallback = AllowRemoveAction;
+            _updateActionsControl.onRemoveCallback = RemoveAction;
+        }
+
+        private bool AllowRemoveAction(ReorderableList list)
+        {
+            if (_selectedUpdateActionIndex < 0 || _selectedUpdateActionIndex >= AI.Actions.Actions.Count) return false;
+
+            return AI.Actions.Actions[_selectedUpdateActionIndex].key.StartsWith(ActionHandler.ACTION_USER);
+        }
+
+        private void RemoveAction(ReorderableList list)
+        {
+            int id = int.Parse(AI.Actions.Actions[_selectedUpdateActionIndex].key.Split('-').Last());
+            CustomAction ca = DBAdapter.DB.Find<CustomAction>(id);
+
+            if (!EditorUtility.DisplayDialog("Confirm", $"Do you really want to delete the action '{ca.Name}'?", "Yes", "No")) return;
+
+            DBAdapter.DB.Execute("delete from CustomActionStep where ActionId=?", ca.Id);
+            DBAdapter.DB.Delete(ca);
+
+            AI.Actions.Init(true);
+            InitUpdateActions();
+        }
+
+        private void CreateAction(string actionName)
+        {
+            CustomAction action = new CustomAction(actionName);
+            DBAdapter.DB.Insert(action);
+
+            AI.Actions.Init(true);
+            InitUpdateActions();
+            EditAction(action.Id);
+        }
+
+        private void EditAction(string actionKey)
+        {
+            int id = int.Parse(actionKey.Split('-').Last());
+            EditAction(id);
+        }
+
+        private void EditAction(int id)
+        {
+            CustomAction action = DBAdapter.DB.Find<CustomAction>(id);
+
+            ActionUI actionUI = ActionUI.ShowWindow();
+            actionUI.Init(action, InitUpdateActions);
+        }
+
+        private void OnActionsInitialized()
+        {
+            InitUpdateActions();
+        }
 
         private void InitFolderControl()
         {
@@ -66,14 +184,52 @@ namespace AssetInventory
 
             _serializedFoldersObject = new SerializedObject(obj);
             _foldersProperty = _serializedFoldersObject.FindProperty("folders");
-            _folderListControl = new ReorderableList(_serializedFoldersObject, _foldersProperty, true, true, true, true);
-            _folderListControl.drawElementCallback = DrawFoldersListItems;
-            _folderListControl.drawHeaderCallback = rect => EditorGUI.LabelField(rect, "Additional Folders to Index");
+            _folderListControl = new ReorderableList(_serializedFoldersObject, _foldersProperty, true, false, true, true);
+            _folderListControl.drawElementCallback = DrawFoldersListItem;
+            _folderListControl.drawHeaderCallback = rect => EditorGUI.LabelField(rect, "Folders to Index");
             _folderListControl.onAddCallback = OnAddCustomFolder;
             _folderListControl.onRemoveCallback = OnRemoveCustomFolder;
         }
 
-        private void DrawFoldersListItems(Rect rect, int index, bool isActive, bool isFocused)
+        private void DrawUpdateActionItem(Rect rect, int index, bool isActive, bool isFocused)
+        {
+            if (index >= AI.Actions.Actions.Count) return;
+
+            UpdateAction action = AI.Actions.Actions[index];
+
+            if (isFocused) _selectedUpdateActionIndex = index;
+
+            EditorGUI.BeginChangeCheck();
+            AI.Actions.SetActive(action, GUI.Toggle(new Rect(rect.x, rect.y, 20, EditorGUIUtility.singleLineHeight), AI.Actions.IsActive(action), UIStyles.Content("", "Include action when updating everything"), UIStyles.toggleStyle));
+            if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
+
+            GUI.Label(new Rect(rect.x + 20, rect.y, rect.width - 250, EditorGUIUtility.singleLineHeight), UIStyles.Content(action.name, action.description), UIStyles.entryStyle);
+            Color oldCol = GUI.backgroundColor;
+            if (action.IsRunning())
+            {
+                GUI.backgroundColor = Color.green;
+            }
+            EditorGUI.BeginDisabledGroup(action.IsRunning() || action.scheduled || AI.Actions.ActionsInProgress);
+            if (action.key.StartsWith(ActionHandler.ACTION_USER))
+            {
+                if (GUI.Button(new Rect(rect.x + rect.width - 65, rect.y + 1, 30, 20), EditorGUIUtility.IconContent("editicon.sml", "|Edit Action")))
+                {
+                    EditAction(action.key);
+                }
+            }
+            if (action.supportsForce && ShowAdvanced() && GUI.Button(new Rect(rect.x + rect.width - 65, rect.y + 1, 30, 20), EditorGUIUtility.IconContent("d_preAudioAutoPlayOff@2x", "|Force Run Action Now")))
+            {
+                AI.Actions.RunAction(action, true);
+            }
+            if (GUI.Button(new Rect(rect.x + rect.width - 30, rect.y + 1, 30, 20), EditorGUIUtility.IconContent("d_PlayButton@2x", "|Run Action Now")))
+            {
+                AI.Actions.RunAction(action);
+            }
+            EditorGUI.EndDisabledGroup();
+            GUI.backgroundColor = oldCol;
+        }
+
+        private void DrawFoldersListItem(Rect rect, int index, bool isActive, bool isFocused)
         {
             _legacyCacheLocationFound = false;
             if (index >= AI.Config.folders.Count) return;
@@ -88,7 +244,7 @@ namespace AssetInventory
 
             GUI.Label(new Rect(rect.x + 20, rect.y, rect.width - 250, EditorGUIUtility.singleLineHeight), spec.location, UIStyles.entryStyle);
             GUI.Label(new Rect(rect.x + rect.width - 230, rect.y, 200, EditorGUIUtility.singleLineHeight), UIStyles.FolderTypes[spec.folderType] + (spec.folderType == 1 ? " (" + UIStyles.MediaTypes[spec.scanFor] + ")" : ""), UIStyles.entryStyle);
-            if (GUI.Button(new Rect(rect.x + rect.width - 30, rect.y + 1, 30, 20), EditorGUIUtility.IconContent("Settings", "|Show/Hide Settings Tab")))
+            if (GUI.Button(new Rect(rect.x + rect.width - 30, rect.y + 1, 30, 20), EditorGUIUtility.IconContent("Settings", "|Folder Settings")))
             {
                 FolderSettingsUI folderSettingsUI = new FolderSettingsUI();
                 folderSettingsUI.Init(spec);
@@ -136,53 +292,58 @@ namespace AssetInventory
             GUILayout.BeginVertical();
             _folderScrollPos = GUILayout.BeginScrollView(_folderScrollPos, false, false, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.ExpandWidth(true));
 
-            int labelWidth = 218;
+            int labelWidth = 225;
             int cbWidth = 20;
 
             // invisible spacer to ensure settings are legible if all are collapsed
             EditorGUILayout.LabelField("", GUILayout.Width(labelWidth), GUILayout.Height(1));
 
-            // folders
+            // actions
+            BeginIndentBlock();
+            if (SerializedUpdateActionsObject != null)
+            {
+                SerializedUpdateActionsObject.Update();
+                UpdateActionsControl.DoLayoutList();
+                SerializedUpdateActionsObject.ApplyModifiedProperties();
+
+                GUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+            EndIndentBlock();
+            EditorGUILayout.Space();
+
+            // settings
             EditorGUI.BeginChangeCheck();
-            AI.Config.showIndexLocations = EditorGUILayout.Foldout(AI.Config.showIndexLocations, "Index Locations");
+            AI.Config.showIndexingSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showIndexingSettings, "Indexing");
             if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
 
-            if (AI.Config.showIndexLocations)
+            if (AI.Config.showIndexingSettings)
             {
                 BeginIndentBlock();
                 UIBlock("settings.locationintro", () =>
                 {
-                    EditorGUILayout.LabelField("Unity stores downloads in two cache folders: one for Assets and one for content from the Unity package registry. These Unity cache folders will be your main indexing locations. Specify custom locations below to scan for Unity Packages downloaded from somewhere else than the Asset Store or for any arbitrary media files like your model or sound library you want to access.", EditorStyles.wordWrappedLabel);
-                    EditorGUILayout.Space();
+                    EditorGUILayout.HelpBox("Unity stores downloads in two cache folders: one for Assets and one for content from the Unity package registry. These Unity cache folders will be your main indexing locations. Specify custom locations in the Additional Folders list below.", MessageType.Info);
                 });
 
                 EditorGUI.BeginChangeCheck();
-                AI.Config.indexAssetStore = GUILayout.Toggle(AI.Config.indexAssetStore, "Asset Store Online", GUILayout.MaxWidth(150));
-                EditorGUILayout.Space();
-                AI.Config.indexAssetCache = GUILayout.Toggle(AI.Config.indexAssetCache, "Asset Store Cache", GUILayout.MaxWidth(150));
 
-                if (AI.Config.indexAssetCache)
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Asset Cache Location", "How to determine where Unity stores downloaded asset packages"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.assetCacheLocationType = EditorGUILayout.Popup(AI.Config.assetCacheLocationType, _assetCacheLocationOptions, GUILayout.Width(300));
+                GUILayout.EndHorizontal();
+
+                switch (AI.Config.assetCacheLocationType)
                 {
-                    UIBlock("settings.assetcachecache", () =>
-                    {
-                        EditorGUILayout.Space();
-                        GUILayout.BeginHorizontal();
-                        EditorGUILayout.Space(16, false);
-                        EditorGUILayout.LabelField(UIStyles.Content("Asset Cache Location", "How to determine where Unity stores downloaded asset packages"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                        AI.Config.assetCacheLocationType = EditorGUILayout.Popup(AI.Config.assetCacheLocationType, _assetCacheLocationOptions, GUILayout.Width(300));
-                        GUILayout.EndHorizontal();
-
-                        switch (AI.Config.assetCacheLocationType)
+                    case 0:
+                        UIBlock("settings.actions.openassetcache", () =>
                         {
-                            case 0:
-                                UIBlock("settings.actions.openassetcache", () =>
-                                {
-                                    GUILayout.BeginHorizontal();
-                                    EditorGUILayout.LabelField("", GUILayout.Width(labelWidth + 16));
-                                    if (GUILayout.Button("Open", GUILayout.ExpandWidth(false))) EditorUtility.RevealInFinder(AI.GetAssetCacheFolder());
-                                    EditorGUILayout.LabelField(AI.GetAssetCacheFolder());
-                                    GUILayout.EndHorizontal();
-                                });
+                            GUILayout.BeginHorizontal();
+                            EditorGUILayout.LabelField("", GUILayout.Width(labelWidth));
+                            if (GUILayout.Button("Open", GUILayout.ExpandWidth(false))) EditorUtility.RevealInFinder(AI.GetAssetCacheFolder());
+                            EditorGUILayout.LabelField(AI.GetAssetCacheFolder());
+                            GUILayout.EndHorizontal();
+                        });
 
 #if UNITY_2022_1_OR_NEWER
                                 // show hint if Unity is not self-reporting the cache location
@@ -194,185 +355,70 @@ namespace AssetInventory
                                     GUILayout.EndHorizontal();
                                 }
 #endif
-                                break;
+                        break;
 
-                            case 1:
-                                GUILayout.BeginHorizontal();
-                                EditorGUILayout.LabelField("", GUILayout.Width(labelWidth));
-                                EditorGUI.BeginDisabledGroup(true);
-                                EditorGUILayout.TextField(string.IsNullOrWhiteSpace(AI.Config.assetCacheLocation) ? "[Default] " + AI.GetAssetCacheFolder() : AI.Config.assetCacheLocation, GUILayout.ExpandWidth(true));
-                                EditorGUI.EndDisabledGroup();
-                                if (GUILayout.Button("Select...", GUILayout.ExpandWidth(false))) SelectAssetCacheFolder();
-                                GUILayout.EndHorizontal();
-                                break;
-                        }
-                    });
-                }
-
-                EditorGUILayout.Space();
-                AI.Config.indexPackageCache = GUILayout.Toggle(AI.Config.indexPackageCache, "Package Cache", GUILayout.MaxWidth(150));
-
-                if (AI.Config.indexPackageCache)
-                {
-                    UIBlock("settings.packagecache", () =>
-                    {
-                        EditorGUILayout.Space();
-                        GUILayout.BeginHorizontal();
-                        EditorGUILayout.Space(16, false);
-                        EditorGUILayout.LabelField(UIStyles.Content("Package Cache Location", "How to determine where Unity stores downloaded registry packages"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                        AI.Config.packageCacheLocationType = EditorGUILayout.Popup(AI.Config.packageCacheLocationType, _assetCacheLocationOptions, GUILayout.Width(300));
-                        GUILayout.EndHorizontal();
-
-                        switch (AI.Config.packageCacheLocationType)
+                    case 1:
+                        DrawFolder("", AI.Config.assetCacheLocation, AI.GetAssetCacheFolder(), newFolder =>
                         {
-                            case 0:
-                                UIBlock("settings.actions.openpackagecache", () =>
-                                {
-                                    GUILayout.BeginHorizontal();
-                                    EditorGUILayout.LabelField("", GUILayout.Width(labelWidth + 16));
-                                    if (GUILayout.Button("Open", GUILayout.ExpandWidth(false))) EditorUtility.RevealInFinder(AI.GetPackageCacheFolder());
-                                    EditorGUILayout.LabelField(AI.GetPackageCacheFolder());
-                                    GUILayout.EndHorizontal();
-                                });
-                                break;
-
-                            case 1:
-                                GUILayout.BeginHorizontal();
-                                EditorGUILayout.LabelField("", GUILayout.Width(labelWidth));
-                                EditorGUI.BeginDisabledGroup(true);
-                                EditorGUILayout.TextField(string.IsNullOrWhiteSpace(AI.Config.packageCacheLocation) ? "[Default] " + AI.GetPackageCacheFolder() : AI.Config.packageCacheLocation, GUILayout.ExpandWidth(true));
-                                EditorGUI.EndDisabledGroup();
-                                if (GUILayout.Button("Select...", GUILayout.ExpandWidth(false))) SelectPackageCacheFolder();
-                                GUILayout.EndHorizontal();
-                                break;
-                        }
-                    });
+                            AI.Config.assetCacheLocation = newFolder;
+                            AI.GetObserver().SetPath(AI.GetAssetCacheFolder());
+                        }, labelWidth, "Select asset cache folder of Unity (ending with 'Asset Store-5.x')", validate =>
+                        {
+                            if (Path.GetFileName(validate).ToLowerInvariant() != AI.ASSET_STORE_FOLDER_NAME.ToLowerInvariant())
+                            {
+                                EditorUtility.DisplayDialog("Error", $"Not a valid Unity asset cache folder. It should point to a folder ending with '{AI.ASSET_STORE_FOLDER_NAME}'", "OK");
+                                return false;
+                            }
+                            return true;
+                        });
+                        break;
                 }
 
-                EditorGUILayout.Space();
-                AI.Config.indexAdditionalFolders = GUILayout.Toggle(AI.Config.indexAdditionalFolders, "Additional Folders", GUILayout.MaxWidth(150));
-                if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Package Cache Location", "How to determine where Unity stores downloaded registry packages"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.packageCacheLocationType = EditorGUILayout.Popup(AI.Config.packageCacheLocationType, _assetCacheLocationOptions, GUILayout.Width(300));
+                GUILayout.EndHorizontal();
 
-                if (AI.Config.indexAdditionalFolders)
+                switch (AI.Config.packageCacheLocationType)
                 {
-                    EditorGUILayout.Space();
-                    BeginIndentBlock();
-                    if (SerializedFoldersObject != null)
-                    {
-                        SerializedFoldersObject.Update();
-                        FolderListControl.DoLayoutList();
-                        SerializedFoldersObject.ApplyModifiedProperties();
-                    }
-
-                    if (_legacyCacheLocationFound)
-                    {
-                        EditorGUILayout.HelpBox("You have selected a custom asset cache location as an additional folder. This should be done using the Asset Cache Location UI above in this new version.", MessageType.Warning);
-                    }
-
-                    // relative locations
-                    if (AI.UserRelativeLocations.Count > 0)
-                    {
-                        EditorGUILayout.LabelField("Relative Location Mappings", EditorStyles.boldLabel);
-                        GUILayout.BeginHorizontal();
-                        EditorGUILayout.LabelField("Key", EditorStyles.boldLabel, GUILayout.Width(200));
-                        EditorGUILayout.LabelField("Location", EditorStyles.boldLabel);
-                        GUILayout.EndHorizontal();
-                        foreach (RelativeLocation location in AI.UserRelativeLocations)
+                    case 0:
+                        UIBlock("settings.actions.openpackagecache", () =>
                         {
                             GUILayout.BeginHorizontal();
-                            EditorGUILayout.LabelField(location.Key, GUILayout.Width(200));
-
-                            string otherSystems = "Mappings on other systems:\n\n";
-                            string otherLocs = string.Join("\n", location.otherLocations);
-                            otherSystems += string.IsNullOrWhiteSpace(otherLocs) ? "-None-" : otherLocs;
-
-                            if (string.IsNullOrWhiteSpace(location.Location))
-                            {
-                                EditorGUILayout.LabelField(UIStyles.Content("-Not yet connected-", otherSystems));
-
-                                // TODO: add ability to force delete relative mapping in case it is not used in additional folders anymore
-                            }
-                            else
-                            {
-                                EditorGUILayout.LabelField(UIStyles.Content(location.Location, otherSystems));
-                                if (string.IsNullOrWhiteSpace(otherLocs))
-                                {
-                                    EditorGUI.BeginDisabledGroup(true);
-                                    GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash", "|Cannot delete only remaining mapping"), GUILayout.Width(30));
-                                    EditorGUI.EndDisabledGroup();
-                                }
-                                else
-                                {
-                                    if (GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash", "|Delete mapping"), GUILayout.Width(30)))
-                                    {
-                                        DBAdapter.DB.Delete(location);
-                                        AI.LoadRelativeLocations();
-                                    }
-                                }
-                            }
-                            if (GUILayout.Button(UIStyles.Content("...", "Select folder"), GUILayout.Width(30)))
-                            {
-                                SelectRelativeFolderMapping(location);
-                            }
+                            EditorGUILayout.LabelField("", GUILayout.Width(labelWidth));
+                            if (GUILayout.Button("Open", GUILayout.ExpandWidth(false))) EditorUtility.RevealInFinder(AI.GetPackageCacheFolder());
+                            EditorGUILayout.LabelField(AI.GetPackageCacheFolder());
                             GUILayout.EndHorizontal();
-                        }
-                        EditorGUILayout.Space(20);
-                    }
-                    EndIndentBlock();
+                        });
+                        break;
+
+                    case 1:
+                        DrawFolder("", AI.Config.packageCacheLocation, AI.GetAssetCacheFolder(), newFolder => AI.Config.packageCacheLocation = newFolder, labelWidth);
+                        break;
                 }
 
-                // Unity Asset Manager
-                EditorGUILayout.Space();
-                DrawAssetManager();
-
-                EndIndentBlock();
-            }
-
-            // settings
-            EditorGUILayout.Space();
-            EditorGUI.BeginChangeCheck();
-            AI.Config.showIndexingSettings = EditorGUILayout.Foldout(AI.Config.showIndexingSettings, "Indexing");
-            if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
-
-            if (AI.Config.showIndexingSettings)
-            {
-                BeginIndentBlock();
-                EditorGUI.BeginChangeCheck();
-
-                EditorGUI.BeginChangeCheck();
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Index Sub-Packages", "Will scan packages for other .unitypackage files and also index these."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                EditorGUILayout.LabelField(UIStyles.Content("Index Sub-Packages", "Will scan packages for other .unitypackage files and also index these. Recommended, as it is the basis for SRP support since SRP packages are sub-packages inside other packages."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                 AI.Config.indexSubPackages = EditorGUILayout.Toggle(AI.Config.indexSubPackages, GUILayout.MaxWidth(cbWidth));
                 GUILayout.EndHorizontal();
 
+                EditorGUILayout.LabelField(UIStyles.Content("Download Settings"), EditorStyles.boldLabel);
+
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Download Assets for Indexing", "Automatically download uncached items from the Asset Store for indexing. Will delete them again afterwards if not selected otherwise below. Attention: downloading an item will revoke the right to easily return it through the Asset Store."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.downloadAssets = EditorGUILayout.Toggle(AI.Config.downloadAssets, GUILayout.MaxWidth(cbWidth));
+                EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}Keep Downloaded Assets", "Will not delete automatically downloaded assets after indexing but keep them in the cache instead."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.keepAutoDownloads = EditorGUILayout.Toggle(AI.Config.keepAutoDownloads, GUILayout.MaxWidth(cbWidth));
                 GUILayout.EndHorizontal();
 
-                if (AI.Config.downloadAssets)
-                {
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}Keep Downloaded Assets", "Will not delete automatically downloaded assets after indexing but keep them in the cache instead."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.keepAutoDownloads = EditorGUILayout.Toggle(AI.Config.keepAutoDownloads, GUILayout.MaxWidth(cbWidth));
-                    GUILayout.EndHorizontal();
-
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}Limit Package Size", "Will not automatically download packages larger than specified."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.limitAutoDownloads = EditorGUILayout.Toggle(AI.Config.limitAutoDownloads, GUILayout.Width(15));
-
-                    if (AI.Config.limitAutoDownloads)
-                    {
-                        GUILayout.Label("to", GUILayout.ExpandWidth(false));
-                        AI.Config.downloadLimit = EditorGUILayout.DelayedIntField(AI.Config.downloadLimit, GUILayout.Width(40));
-                        GUILayout.Label("Mb", GUILayout.ExpandWidth(false));
-                    }
-                    GUILayout.EndHorizontal();
-                }
-
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Extract Color Information", "Determines the hue of an image which will enable search by color. Increases indexing time. Can be turned on & off as needed."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.extractColors = EditorGUILayout.Toggle(AI.Config.extractColors, GUILayout.MaxWidth(cbWidth));
+                EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}Limit Package Size", "Will not automatically download packages larger than specified."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.limitAutoDownloads = EditorGUILayout.Toggle(AI.Config.limitAutoDownloads, GUILayout.Width(15));
+
+                if (AI.Config.limitAutoDownloads)
+                {
+                    GUILayout.Label("to", GUILayout.ExpandWidth(false));
+                    AI.Config.downloadLimit = EditorGUILayout.DelayedIntField(AI.Config.downloadLimit, GUILayout.Width(40));
+                    GUILayout.Label("Mb", GUILayout.ExpandWidth(false));
+                }
                 GUILayout.EndHorizontal();
 
                 if (ShowAdvanced())
@@ -417,8 +463,6 @@ namespace AssetInventory
                 }
                 GUILayout.EndHorizontal();
 
-                if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
-
                 if (EditorGUI.EndChangeCheck())
                 {
                     AI.SaveConfig();
@@ -426,16 +470,116 @@ namespace AssetInventory
                 }
                 EndIndentBlock();
             }
+            EditorGUILayout.EndFoldoutHeaderGroup();
+
+            // additional folders
+            EditorGUILayout.Space();
+            EditorGUI.BeginChangeCheck();
+            AI.Config.showFolderSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showFolderSettings, "Additional Folders");
+            if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
+
+            if (AI.Config.showFolderSettings)
+            {
+                BeginIndentBlock();
+
+                UIBlock("settings.foldersintro", () =>
+                {
+                    EditorGUILayout.HelpBox("Use Additional Folders to scan for Unity Packages downloaded from somewhere else than the Asset Store or for any arbitrary media files like your model or sound library you want to access.", MessageType.Info);
+                });
+
+                if (SerializedFoldersObject != null)
+                {
+                    EditorGUILayout.Space();
+                    SerializedFoldersObject.Update();
+                    FolderListControl.DoLayoutList();
+                    SerializedFoldersObject.ApplyModifiedProperties();
+                }
+
+                if (_legacyCacheLocationFound)
+                {
+                    EditorGUILayout.HelpBox("You have selected a custom asset cache location as an additional folder. This should be done using the Asset Cache Location UI above in this new version.", MessageType.Warning);
+                }
+
+                // relative locations
+                if (AI.UserRelativeLocations.Count > 0)
+                {
+                    EditorGUILayout.LabelField("Relative Location Mappings", EditorStyles.boldLabel);
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField("Key", EditorStyles.boldLabel, GUILayout.Width(200));
+                    EditorGUILayout.LabelField("Location", EditorStyles.boldLabel);
+                    GUILayout.EndHorizontal();
+                    foreach (RelativeLocation location in AI.UserRelativeLocations)
+                    {
+                        GUILayout.BeginHorizontal();
+                        EditorGUILayout.LabelField(location.Key, GUILayout.Width(200));
+
+                        string otherSystems = "Mappings on other systems:\n\n";
+                        string otherLocs = string.Join("\n", location.otherLocations);
+                        otherSystems += string.IsNullOrWhiteSpace(otherLocs) ? "-None-" : otherLocs;
+
+                        if (string.IsNullOrWhiteSpace(location.Location))
+                        {
+                            EditorGUILayout.LabelField(UIStyles.Content("-Not yet connected-", otherSystems));
+
+                            // TODO: add ability to force delete relative mapping in case it is not used in additional folders anymore
+                        }
+                        else
+                        {
+                            EditorGUILayout.LabelField(UIStyles.Content(location.Location, otherSystems));
+                            if (string.IsNullOrWhiteSpace(otherLocs))
+                            {
+                                EditorGUI.BeginDisabledGroup(true);
+                                GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash", "|Cannot delete only remaining mapping"), GUILayout.Width(30));
+                                EditorGUI.EndDisabledGroup();
+                            }
+                            else
+                            {
+                                if (GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash", "|Delete mapping"), GUILayout.Width(30)))
+                                {
+                                    DBAdapter.DB.Delete(location);
+                                    AI.LoadRelativeLocations();
+                                }
+                            }
+                        }
+                        if (GUILayout.Button(UIStyles.Content("...", "Select folder"), GUILayout.Width(30)))
+                        {
+                            SelectRelativeFolderMapping(location);
+                        }
+                        GUILayout.EndHorizontal();
+                    }
+                }
+                EndIndentBlock();
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
+
+            // Asset Manager
+            EditorGUILayout.Space();
+            EditorGUI.BeginChangeCheck();
+            AI.Config.showAMSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showAMSettings, "Unity Asset Manager");
+            if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
+
+            if (AI.Config.showAMSettings)
+            {
+                BeginIndentBlock();
+                DrawAssetManager();
+                EndIndentBlock();
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
 
             // importing
             EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();
-            AI.Config.showImportSettings = EditorGUILayout.Foldout(AI.Config.showImportSettings, "Import");
+            AI.Config.showImportSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showImportSettings, "Import");
             if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
 
             if (AI.Config.showImportSettings)
             {
                 BeginIndentBlock();
+                UIBlock("settings.srpintro", () =>
+                {
+                    EditorGUILayout.HelpBox("There is extensive support for SRPs (scriptable render pipelines). Two mechanisms exist: if a package brings it's own SRP support packages, dependencies will automatically be used from these which fit to the current project. If these do not exist, the tool can automatically trigger the Unity URP converter after an import when activated below.", MessageType.Info);
+                });
+
                 EditorGUI.BeginChangeCheck();
                 GUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(UIStyles.Content("Adapt to Render Pipeline", "Will automatically adapt materials to the current render pipeline upon import."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
@@ -456,12 +600,15 @@ namespace AssetInventory
 #if USE_URP_CONVERTER
                 GUILayout.Label("(URP only, supported in current project)", EditorStyles.wordWrappedLabel, GUILayout.ExpandWidth(false));
 #else
-                GUILayout.Label("(URP only, unsupported in current project, requires URP version 14 or higher)", EditorStyles.wordWrappedLabel, GUILayout.ExpandWidth(false));
+                GUILayout.Label("(URP only, unsupported in current project, requires URP version 14 or higher)", EditorStyles.wordWrappedLabel, GUILayout.ExpandWidth(true));
 #endif
                 GUILayout.EndHorizontal();
 
-                EditorGUILayout.Space();
-                EditorGUILayout.HelpBox("You can always drag & drop assets from the search into a folder of your choice in the project view. What can be configured is the behavior when using the Import button or double-clicking an asset.", MessageType.Info);
+                UIBlock("settings.importstructureintro", () =>
+                {
+                    EditorGUILayout.Space();
+                    EditorGUILayout.HelpBox("You can always drag & drop assets from the search into a folder of your choice in the project view. What can be configured is the behavior when using the Import button or double-clicking an asset.", MessageType.Info);
+                });
 
                 GUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(UIStyles.Content("Structure", "Structure to materialize the imported files in"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
@@ -475,18 +622,19 @@ namespace AssetInventory
 
                 if (AI.Config.importDestination == 2)
                 {
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField("Target Folder", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    EditorGUI.BeginDisabledGroup(true);
-                    EditorGUILayout.TextField(string.IsNullOrWhiteSpace(AI.Config.importFolder) ? "[Assets Root]" : AI.Config.importFolder, GUILayout.ExpandWidth(true));
-                    EditorGUI.EndDisabledGroup();
-                    if (GUILayout.Button("Select...", GUILayout.ExpandWidth(false))) SelectImportFolder();
-                    if (!string.IsNullOrWhiteSpace(AI.Config.importFolder) && GUILayout.Button("Clear", GUILayout.ExpandWidth(false)))
+                    DrawFolder("Target Folder", AI.Config.importFolder, "/Assets", newFolder =>
                     {
-                        AI.Config.importFolder = null;
-                        AI.SaveConfig();
-                    }
-                    GUILayout.EndHorizontal();
+                        // store only part relative to /Assets
+                        AI.Config.importFolder = newFolder?.Substring(Path.GetDirectoryName(Application.dataPath).Length + 1);
+                    }, labelWidth, "Select folder for imports", validate =>
+                    {
+                        if (!validate.Replace("\\", "/").ToLowerInvariant().StartsWith(Application.dataPath.Replace("\\", "/").ToLowerInvariant()))
+                        {
+                            EditorUtility.DisplayDialog("Error", "Folder must be inside current project", "OK");
+                            return false;
+                        }
+                        return true;
+                    });
                 }
 
                 GUILayout.BeginHorizontal();
@@ -495,12 +643,17 @@ namespace AssetInventory
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Cross-Package Dependencies", "If referenced GUIDs cannot be found in the current package, will scan the whole database if a match can be found somewhere else. Some asset authors rely on having multiple packs installed."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                EditorGUILayout.LabelField(UIStyles.Content("Cross-Package Dependencies", "If referenced GUIDs cannot be found in the current package, the tool will scan the whole database if a match can be found somewhere else. Some asset authors rely on having multiple packs installed, e.g. level assembly packs."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                 AI.Config.allowCrossPackageDependencies = EditorGUILayout.Toggle(AI.Config.allowCrossPackageDependencies, GUILayout.MaxWidth(cbWidth));
                 GUILayout.EndHorizontal();
 
                 if (ShowAdvanced())
                 {
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Remove LODs", "Will remove LOD groups from imported prefabs and only keep the first one."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.removeLODs = EditorGUILayout.Toggle(AI.Config.removeLODs, GUILayout.MaxWidth(cbWidth));
+                    GUILayout.EndHorizontal();
+
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField(UIStyles.Content("Remove Unresolveable Files", "Will automatically clean-up the database if a file cannot be found in the materialized package anymore but is still in the database."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     AI.Config.removeUnresolveableDBFiles = EditorGUILayout.Toggle(AI.Config.removeUnresolveableDBFiles, GUILayout.MaxWidth(cbWidth));
@@ -510,11 +663,12 @@ namespace AssetInventory
                 if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
                 EndIndentBlock();
             }
+            EditorGUILayout.EndFoldoutHeaderGroup();
 
             // preview images
             EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();
-            AI.Config.showPreviewSettings = EditorGUILayout.Foldout(AI.Config.showPreviewSettings, "Preview Images");
+            AI.Config.showPreviewSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showPreviewSettings, "Preview Images");
             if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
 
             if (AI.Config.showPreviewSettings)
@@ -528,12 +682,12 @@ namespace AssetInventory
                     EditorGUILayout.LabelField(UIStyles.Content("Extract Preview Images", "Keep a folder with preview images for each asset file. Will require a moderate amount of space if there are many files."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     AI.Config.extractPreviews = EditorGUILayout.Toggle(AI.Config.extractPreviews, GUILayout.MaxWidth(cbWidth));
                     GUILayout.EndHorizontal();
-                }
 
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Use Fallback-Icons as Previews", "Will show generic icons in case a file preview is missing instead of an empty tile."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.showIconsForMissingPreviews = EditorGUILayout.Toggle(AI.Config.showIconsForMissingPreviews, GUILayout.MaxWidth(cbWidth));
-                GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Use Fallback-Icons as Previews", "Will show generic icons in case a file preview is missing instead of an empty tile."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.showIconsForMissingPreviews = EditorGUILayout.Toggle(AI.Config.showIconsForMissingPreviews, GUILayout.MaxWidth(cbWidth));
+                    GUILayout.EndHorizontal();
+                }
 
                 GUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(UIStyles.Content("Upscale Preview Images", "Resize preview images to make them fill a bigger area of the tiles."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
@@ -554,26 +708,38 @@ namespace AssetInventory
                     GUILayout.EndHorizontal();
                 }
 
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Animation Frames", "Number of frames to create for the preview of animated objects (e.g. videos), evenly spread across the animation. Higher frames require more storage space. Recommended are 3 or 4."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.animationGrid = EditorGUILayout.DelayedIntField(AI.Config.animationGrid, GUILayout.Width(50));
-                EditorGUILayout.LabelField("(will be squared, e.g. 4 = 16 frames)", EditorStyles.miniLabel);
-                GUILayout.EndHorizontal();
+                if (ShowAdvanced())
+                {
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Animation Frames", "Number of frames to create for the preview of animated objects (e.g. videos), evenly spread across the animation. Higher frames require more storage space. Recommended are 3 or 4."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.animationGrid = EditorGUILayout.DelayedIntField(AI.Config.animationGrid, GUILayout.Width(50));
+                    EditorGUILayout.LabelField("(will be squared, e.g. 4 = 16 frames)", EditorStyles.miniLabel);
+                    GUILayout.EndHorizontal();
 
-                GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Animation Speed", "Time interval until a new frame of the animation is shown in seconds."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.animationSpeed = EditorGUILayout.DelayedFloatField(AI.Config.animationSpeed, GUILayout.Width(50));
-                EditorGUILayout.LabelField("s", EditorStyles.miniLabel);
-                GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Animation Speed", "Time interval until a new frame of the animation is shown in seconds."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.animationSpeed = EditorGUILayout.DelayedFloatField(AI.Config.animationSpeed, GUILayout.Width(50));
+                    EditorGUILayout.LabelField("s", EditorStyles.miniLabel);
+                    GUILayout.EndHorizontal();
+                }
 
                 if (ShowAdvanced())
                 {
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField(UIStyles.Content("Exclude Extensions", "File extensions that should be skipped when creating preview images during media and archive indexing (e.g. blend,fbx,wav)."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     AI.Config.excludePreviewExtensions = EditorGUILayout.Toggle(AI.Config.excludePreviewExtensions, GUILayout.Width(16));
-                    if (AI.Config.excludePreviewExtensions) AI.Config.excludedPreviewExtensions = EditorGUILayout.DelayedTextField(AI.Config.excludedPreviewExtensions, GUILayout.Width(200));
+                    if (AI.Config.excludePreviewExtensions) AI.Config.excludedPreviewExtensions = EditorGUILayout.DelayedTextField(AI.Config.excludedPreviewExtensions, GUILayout.Width(300));
                     GUILayout.EndHorizontal();
                 }
+
+#if !USE_VECTOR_GRAPHICS
+                EditorGUILayout.Space();
+                EditorGUILayout.HelpBox("In order to see previews for SVG graphics, the 'com.unity.vectorgraphics' needs to be installed.", MessageType.Warning);
+                if (GUILayout.Button("Install Package"))
+                {
+                    Client.Add("com.unity.vectorgraphics");
+                }
+#endif
 
                 if (EditorGUI.EndChangeCheck())
                 {
@@ -582,67 +748,51 @@ namespace AssetInventory
                 }
                 EndIndentBlock();
             }
+            EditorGUILayout.EndFoldoutHeaderGroup();
 
             // backup
             EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();
-            AI.Config.showBackupSettings = EditorGUILayout.Foldout(AI.Config.showBackupSettings, "Backup");
+            AI.Config.showBackupSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showBackupSettings, "Backup");
             if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
 
             if (AI.Config.showBackupSettings)
             {
                 BeginIndentBlock();
-                EditorGUILayout.LabelField("Automatically create backups of your asset purchases. Unity does not store old versions and assets get regularly deprecated. Backups will allow you to go back to previous versions easily. Backups will be done at the end of each update cycle.", EditorStyles.wordWrappedLabel);
-                EditorGUILayout.Space();
+                EditorGUILayout.HelpBox("Automatically create backups of your asset purchases. Unity does not store old versions and assets get regularly deprecated. Backups will allow you to go back to previous versions easily. Backups will be done at the end of each update cycle.", MessageType.Info);
                 EditorGUI.BeginChangeCheck();
 
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Create Backups", "Store downloaded assets in a separate folder"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.createBackups = EditorGUILayout.Toggle(AI.Config.createBackups, GUILayout.MaxWidth(cbWidth));
+                EditorGUILayout.LabelField(UIStyles.Content("Activated Packages"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                EditorGUILayout.LabelField(UIStyles.Content($"{_backupPackageCount} (set per package in Packages view)"));
                 GUILayout.EndHorizontal();
 
-                if (AI.Config.createBackups)
-                {
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Active for New Packages", "Will mark newly encountered packages to be backed up automatically. Otherwise you need to select packages manually which will save a lot of disk space potentially."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.backupByDefault = EditorGUILayout.Toggle(AI.Config.backupByDefault, GUILayout.MaxWidth(cbWidth));
-                    GUILayout.EndHorizontal();
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Active for New Packages", "Will mark newly encountered packages to be backed up automatically. Otherwise you need to select packages manually which will save a lot of disk space potentially."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.backupByDefault = EditorGUILayout.Toggle(AI.Config.backupByDefault, GUILayout.MaxWidth(cbWidth));
+                GUILayout.EndHorizontal();
 
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Override Patch Versions", "Will remove all but the latest patch version of an asset inside the same minor version (e.g. 5.4.3 instead of 5.4.2)"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.onlyLatestPatchVersion = EditorGUILayout.Toggle(AI.Config.onlyLatestPatchVersion, GUILayout.MaxWidth(cbWidth));
-                    GUILayout.EndHorizontal();
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Override Patch Versions", "Will remove all but the latest patch version of an asset inside the same minor version (e.g. 5.4.3 instead of 5.4.2)"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.onlyLatestPatchVersion = EditorGUILayout.Toggle(AI.Config.onlyLatestPatchVersion, GUILayout.MaxWidth(cbWidth));
+                GUILayout.EndHorizontal();
 
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Backups per Asset", "Number of versions to keep per asset"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.backupsPerAsset = EditorGUILayout.IntField(AI.Config.backupsPerAsset, GUILayout.Width(50));
-                    GUILayout.EndHorizontal();
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Backups per Asset", "Number of versions to keep per asset"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.backupsPerAsset = EditorGUILayout.IntField(AI.Config.backupsPerAsset, GUILayout.Width(50));
+                GUILayout.EndHorizontal();
 
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField("Storage Folder", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    EditorGUI.BeginDisabledGroup(true);
-                    EditorGUILayout.TextField(string.IsNullOrWhiteSpace(AI.Config.backupFolder) ? "[Default] " + AI.GetBackupFolder(false) : AI.Config.backupFolder, GUILayout.ExpandWidth(true));
-                    EditorGUI.EndDisabledGroup();
-                    if (GUILayout.Button("Select...", GUILayout.ExpandWidth(false))) SelectBackupFolder();
-                    if (!string.IsNullOrWhiteSpace(AI.Config.backupFolder))
-                    {
-                        if (GUILayout.Button("Clear", GUILayout.ExpandWidth(false)))
-                        {
-                            AI.Config.backupFolder = null;
-                            AI.SaveConfig();
-                        }
-                    }
-                    if (GUILayout.Button("Open", GUILayout.ExpandWidth(false))) EditorUtility.RevealInFinder(AI.GetBackupFolder(false));
-                    GUILayout.EndHorizontal();
-                }
+                DrawFolder("Storage Folder", AI.Config.backupFolder, AI.GetBackupFolder(false), newFolder => AI.Config.backupFolder = newFolder, labelWidth);
+
                 if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
                 EndIndentBlock();
             }
+            EditorGUILayout.EndFoldoutHeaderGroup();
 
             // AI
             EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();
-            AI.Config.showAISettings = EditorGUILayout.Foldout(AI.Config.showAISettings, "Artificial Intelligence");
+            AI.Config.showAISettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showAISettings, "Artificial Intelligence");
             if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
 
             if (AI.Config.showAISettings)
@@ -651,125 +801,220 @@ namespace AssetInventory
                 EditorGUI.BeginChangeCheck();
 
                 GUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(UIStyles.Content("Create AI Captions", "Will use AI to create an automatic caption of what is visible in each individual asset file using the existing preview images. Once indexed this will yield potentially much better search results."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                AI.Config.createAICaptions = EditorGUILayout.Toggle(AI.Config.createAICaptions, GUILayout.MaxWidth(cbWidth));
+                EditorGUILayout.LabelField(UIStyles.Content("Activated Packages"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                EditorGUILayout.LabelField(UIStyles.Content($"{_aiPackageCount} (set per package in Packages view)"));
                 GUILayout.EndHorizontal();
 
-                if (AI.Config.createAICaptions)
+                EditorGUILayout.LabelField("Create Captions for", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}Prefabs", "Will create captions for prefabs."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.aiForPrefabs = EditorGUILayout.Toggle(AI.Config.aiForPrefabs, GUILayout.MaxWidth(cbWidth));
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}Images", "Will create captions for image files."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.aiForImages = EditorGUILayout.Toggle(AI.Config.aiForImages, GUILayout.MaxWidth(cbWidth));
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}Models", "Will create captions for model files."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.aiForModels = EditorGUILayout.Toggle(AI.Config.aiForModels, GUILayout.MaxWidth(cbWidth));
+                GUILayout.EndHorizontal();
+
+                if (ShowAdvanced())
                 {
                     GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}for Prefabs", "Will create captions for prefabs."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.aiForPrefabs = EditorGUILayout.Toggle(AI.Config.aiForPrefabs, GUILayout.MaxWidth(cbWidth));
+                    EditorGUILayout.LabelField(UIStyles.Content("Log Created Captions", "Will print finished captions to the console."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.logAICaptions = EditorGUILayout.Toggle(AI.Config.logAICaptions, GUILayout.MaxWidth(cbWidth));
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}for Images", "Will create captions for image files."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.aiForImages = EditorGUILayout.Toggle(AI.Config.aiForImages, GUILayout.MaxWidth(cbWidth));
-                    GUILayout.EndHorizontal();
-
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content($"{UIStyles.INDENT}for Models", "Will create captions for model files."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.aiForModels = EditorGUILayout.Toggle(AI.Config.aiForModels, GUILayout.MaxWidth(cbWidth));
-                    GUILayout.EndHorizontal();
-
-                    if (ShowAdvanced())
-                    {
-                        GUILayout.BeginHorizontal();
-                        EditorGUILayout.LabelField(UIStyles.Content("Log Created Captions", "Will print finished captions to the console."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                        AI.Config.logAICaptions = EditorGUILayout.Toggle(AI.Config.logAICaptions, GUILayout.MaxWidth(cbWidth));
-                        GUILayout.EndHorizontal();
-
-                        GUILayout.BeginHorizontal();
-                        EditorGUILayout.LabelField(UIStyles.Content("Pause Between Calculations", "AI inference requires significant resources and will bring a system to full load. Running constantly can lead to system crashes. Feel free to experiment with lower pauses."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                        AI.Config.aiPause = EditorGUILayout.DelayedIntField(AI.Config.aiPause, GUILayout.Width(30));
-                        EditorGUILayout.LabelField("seconds", EditorStyles.miniLabel);
-                        GUILayout.EndHorizontal();
-                    }
-
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Activated Packages"), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    EditorGUILayout.LabelField(UIStyles.Content($"{_aiPackageCount} (set per package in Packages view)"));
-                    GUILayout.EndHorizontal();
-
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Used Model", "The model to be used for captioning. Local models are free of charge, but require a potent computer and graphics card."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    GUILayout.BeginVertical();
-                    if (GUILayout.Button("Salesforce Blip through Blip-Caption tool (local, free)", UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true)))
-                    {
-                        Application.OpenURL("https://github.com/simonw/blip-caption");
-                    }
-                    EditorGUILayout.HelpBox("This model requires installing the Blip-Caption tool. It is free of charge and the guide can be found under the GitHub link above (Python, pipx, blip).", MessageType.Info);
-                    GUILayout.EndVertical();
-                    GUILayout.EndHorizontal();
-
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Model Type", "The variant of the model that should be used."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.blipType = EditorGUILayout.Popup(AI.Config.blipType, _blipOptions, GUILayout.Width(100));
-                    GUILayout.EndHorizontal();
-
-                    if (ShowAdvanced())
-                    {
-                        GUILayout.BeginHorizontal();
-                        EditorGUILayout.LabelField(UIStyles.Content("Ignore empty results", "Will not stop the captioning process when encountering empty captions which typically means the tooling is not properly set up."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                        AI.Config.aiContinueOnEmpty = EditorGUILayout.Toggle(AI.Config.aiContinueOnEmpty, GUILayout.MaxWidth(cbWidth));
-                        GUILayout.EndHorizontal();
-
-                        GUILayout.BeginHorizontal();
-                        EditorGUILayout.LabelField(UIStyles.Content("Use GPU", "Activate GPU acceleration if your system supports it. Otherwise only the CPU will be used. GPU support requires a patched blip version supporting GPU usage, see pull request 8."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                        AI.Config.aiUseGPU = EditorGUILayout.Toggle(AI.Config.aiUseGPU, GUILayout.MaxWidth(cbWidth));
-                        GUILayout.EndHorizontal();
-                    }
-
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Bulk Process Size", "Number of files that are captioned by the model at once."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.blipChunkSize = EditorGUILayout.IntField(AI.Config.blipChunkSize, GUILayout.Width(50));
-                    GUILayout.EndHorizontal();
-
-                    EditorGUILayout.Space();
-                    GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField("Test Image", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    GUILayout.BeginVertical(GUILayout.Width(120));
-                    GUILayout.Box(Logo, EditorStyles.centeredGreyMiniLabel, GUILayout.Width(100), GUILayout.MaxHeight(100));
-                    if (GUILayout.Button("Create Caption", GUILayout.ExpandWidth(false)))
-                    {
-                        string path = AssetDatabase.GUIDToAssetPath(AssetDatabase.FindAssets("t:Texture2D asset-inventory-logo").FirstOrDefault());
-                        string absolutePath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", path));
-                        List<BlipResult> captionResult = CaptionCreator.CaptionImage(new List<string> {absolutePath});
-                        _captionTest = captionResult?.FirstOrDefault()?.caption;
-                        if (string.IsNullOrWhiteSpace(_captionTest))
-                        {
-                            _captionTest = "-Failed to create caption. Check tooling.-";
-                        }
-                        else
-                        {
-                            _captionTest = $"\"{_captionTest}\"";
-                        }
-                    }
-                    GUILayout.EndVertical();
-                    EditorGUILayout.LabelField(_captionTest);
+                    EditorGUILayout.LabelField(UIStyles.Content("Pause Between Calculations", "AI inference requires significant resources and will bring a system to full load. Running constantly can lead to system crashes. Feel free to experiment with lower pauses."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.aiPause = EditorGUILayout.DelayedIntField(AI.Config.aiPause, GUILayout.Width(30));
+                    EditorGUILayout.LabelField("seconds", EditorStyles.miniLabel);
                     GUILayout.EndHorizontal();
                 }
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Used Model", "The model to be used for captioning. Local models are free of charge, but require a potent computer and graphics card."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                GUILayout.BeginVertical();
+                if (GUILayout.Button("Salesforce Blip through Blip-Caption tool (local, free)", UIStyles.wrappedLinkLabel, GUILayout.ExpandWidth(true)))
+                {
+                    Application.OpenURL("https://github.com/simonw/blip-caption");
+                }
+                EditorGUILayout.HelpBox("This model requires installing the Blip-Caption tool. It is free of charge and the guide can be found under the GitHub link above (Python, pipx, blip).", MessageType.Info);
+                GUILayout.EndVertical();
+                GUILayout.EndHorizontal();
+
+                if (ShowAdvanced())
+                {
+                    DrawFolder("Blip Folder", AI.Config.aiToolPath, null, newFolder => AI.Config.aiToolPath = newFolder, labelWidth);
+                }
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Model Type", "The variant of the model that should be used."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.blipType = EditorGUILayout.Popup(AI.Config.blipType, _blipOptions, GUILayout.Width(100));
+                GUILayout.EndHorizontal();
+
+                if (ShowAdvanced())
+                {
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Ignore empty results", "Will not stop the captioning process when encountering empty captions which typically means the tooling is not properly set up."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.aiContinueOnEmpty = EditorGUILayout.Toggle(AI.Config.aiContinueOnEmpty, GUILayout.MaxWidth(cbWidth));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Use GPU", "Activate GPU acceleration if your system supports it. Otherwise only the CPU will be used. GPU support requires a patched blip version supporting GPU usage, see pull request 8."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.aiUseGPU = EditorGUILayout.Toggle(AI.Config.aiUseGPU, GUILayout.MaxWidth(cbWidth));
+                    GUILayout.EndHorizontal();
+                }
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Bulk Process Size", "Number of files that are captioned by the model at once."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.blipChunkSize = EditorGUILayout.IntField(AI.Config.blipChunkSize, GUILayout.Width(50));
+                GUILayout.EndHorizontal();
+
+                EditorGUILayout.Space();
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Test Image", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                GUILayout.BeginVertical(GUILayout.Width(120));
+                GUILayout.Box(Logo, EditorStyles.centeredGreyMiniLabel, GUILayout.Width(100), GUILayout.MaxHeight(100));
+                if (GUILayout.Button("Create Caption", GUILayout.ExpandWidth(false)))
+                {
+                    string path = AssetDatabase.GUIDToAssetPath(AssetDatabase.FindAssets("t:Texture2D asset-inventory-logo").FirstOrDefault());
+                    string absolutePath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", path));
+                    List<BlipResult> captionResult = CaptionCreator.CaptionImage(new List<string> {absolutePath});
+                    _captionTest = captionResult?.FirstOrDefault()?.caption;
+                    if (string.IsNullOrWhiteSpace(_captionTest))
+                    {
+                        _captionTest = "-Failed to create caption. Check tooling.-";
+                    }
+                    else
+                    {
+                        _captionTest = $"\"{_captionTest}\"";
+                    }
+                }
+                GUILayout.EndVertical();
+                EditorGUILayout.LabelField(_captionTest);
+                GUILayout.EndHorizontal();
 
                 if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
                 EndIndentBlock();
             }
+            EditorGUILayout.EndFoldoutHeaderGroup();
+
+            // locations
+            EditorGUILayout.Space();
+            EditorGUI.BeginChangeCheck();
+            AI.Config.showLocationSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showLocationSettings, "Locations");
+            if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
+
+            if (AI.Config.showLocationSettings)
+            {
+                BeginIndentBlock();
+                EditorGUILayout.HelpBox("Per default all folders reside at the database location. Especially the cache, backup and preview folders can become quite large. You can move those to a different location with more space if needed. The database itself should be on the fastest available drive. If you change the locations, make sure to move the former contents along in case you want to keep the data.", MessageType.Info);
+                EditorGUI.BeginChangeCheck();
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Database", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUILayout.TextField(AI.GetStorageFolder(), GUILayout.ExpandWidth(true));
+                EditorGUI.EndDisabledGroup();
+                EditorGUI.BeginDisabledGroup(AI.Actions.ActionsInProgress);
+                if (GUILayout.Button("Change...", GUILayout.ExpandWidth(false))) SetDatabaseLocation();
+                EditorGUI.EndDisabledGroup();
+                GUILayout.EndHorizontal();
+
+                DrawFolder("Backups", AI.Config.backupFolder, AI.GetBackupFolder(false), newFolder => AI.Config.backupFolder = newFolder, labelWidth);
+                DrawFolder("Previews", AI.Config.previewFolder, AI.GetPreviewFolder(null, true), newFolder =>
+                {
+                    AI.Config.previewFolder = newFolder;
+                    AI.RefreshPreviewCache();
+                }, labelWidth);
+                DrawFolder("Cache", AI.Config.cacheFolder, AI.GetMaterializeFolder(), newFolder => AI.Config.cacheFolder = newFolder, labelWidth);
+
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(UIStyles.Content("Limit Cache Size", "Flag if to regularly scan the cache folder and remove old items until the size limit is reached again. Only items that are not marked as 'Keep Extracted' will be removed."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                AI.Config.limitCacheSize = EditorGUILayout.Toggle(AI.Config.limitCacheSize, GUILayout.MaxWidth(cbWidth));
+                if (AI.Config.limitCacheSize)
+                {
+                    AI.Config.cacheLimit = EditorGUILayout.DelayedIntField(AI.Config.cacheLimit, GUILayout.Width(50));
+                    EditorGUILayout.LabelField("Gb", EditorStyles.miniLabel, GUILayout.Width(20));
+                    EditorGUI.BeginDisabledGroup(AI.CacheLimiter.IsRunning);
+                    if (GUILayout.Button("Run Check", GUILayout.ExpandWidth(false)))
+                    {
+                        AI.CacheLimiter.CheckAndClean();
+                    }
+                    if (AI.CacheLimiter.IsRunning && AI.CacheLimiter.CurrentSize > 0)
+                    {
+                        EditorGUILayout.LabelField($"Calculating... Current Size: {EditorUtility.FormatBytes(AI.CacheLimiter.CurrentSize)}", EditorStyles.miniLabel);
+                    }
+                    else if (AI.CacheLimiter.CurrentSize > AI.CacheLimiter.GetLimit())
+                    {
+                        EditorGUILayout.LabelField($"The current cache size with {EditorUtility.FormatBytes(AI.CacheLimiter.CurrentSize)} exceeds the limit due to persistent cache entries ('Keep Cached' setting per package) that will not be cleaned up.", EditorStyles.wordWrappedMiniLabel);
+                    }
+                    EditorGUI.EndDisabledGroup();
+                    GUILayout.FlexibleSpace();
+                }
+                GUILayout.EndHorizontal();
+
+                EditorGUILayout.Space();
+                GUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Configuration", EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                GUILayout.BeginVertical();
+                GUILayout.BeginHorizontal();
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUILayout.TextField(AI.UsedConfigLocation, GUILayout.ExpandWidth(true));
+                EditorGUI.EndDisabledGroup();
+                if (GUILayout.Button("Open", GUILayout.ExpandWidth(false))) EditorUtility.RevealInFinder(AI.UsedConfigLocation);
+                GUILayout.EndHorizontal();
+                EditorGUILayout.HelpBox("To change, either copy the json file into your project to use a project-specific configuration or use the 'ASSETINVENTORY_CONFIG_PATH' environment variable to define a new global location (see documentation).", MessageType.Info);
+                GUILayout.EndVertical();
+                GUILayout.EndHorizontal();
+
+                if (EditorGUI.EndChangeCheck())
+                {
+                    AI.SaveConfig();
+                    AI.CacheLimiter.Enabled = AI.Config.limitCacheSize;
+                    AI.CacheLimiter.SetLimit(AI.Config.cacheLimit);
+                }
+                EndIndentBlock();
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
 
             // advanced
             if (AI.Config.showAdvancedSettings || ShowAdvanced())
             {
                 EditorGUILayout.Space();
                 EditorGUI.BeginChangeCheck();
-                AI.Config.showAdvancedSettings = EditorGUILayout.Foldout(AI.Config.showAdvancedSettings, "Advanced");
+                AI.Config.showAdvancedSettings = EditorGUILayout.BeginFoldoutHeaderGroup(AI.Config.showAdvancedSettings, "Advanced");
                 if (EditorGUI.EndChangeCheck()) AI.SaveConfig();
 
                 if (AI.Config.showAdvancedSettings)
                 {
                     BeginIndentBlock();
+
+#if UNITY_2021_3_OR_NEWER && !USE_TUTORIALS
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Tutorials", "Integrated tutorials require the Unity Tutorials package installed."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    if (GUILayout.Button("Install/Upgrade Tutorials Package...", GUILayout.ExpandWidth(false)))
+                    {
+                        Client.Add($"com.unity.learn.iet-framework@{AI.TUTORIALS_VERSION}");
+                    }
+                    GUILayout.EndHorizontal();
+#endif
+
                     EditorGUI.BeginChangeCheck();
 
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField(UIStyles.Content("Hide Advanced behind CTRL", "Will show only the main features in the UI permanently and hide all the rest until CTRL is held down."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     AI.Config.hideAdvanced = EditorGUILayout.Toggle(AI.Config.hideAdvanced, GUILayout.MaxWidth(cbWidth));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Use Affiliate Links", "Will support the further development of the tool by allowing the usage of affiliate links whenever opening Asset Store pages."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.useAffiliateLinks = EditorGUILayout.Toggle(AI.Config.useAffiliateLinks, GUILayout.MaxWidth(cbWidth));
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
@@ -804,11 +1049,6 @@ namespace AssetInventory
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField(UIStyles.Content("Hide Settings Automatically", "Will automatically hide the search settings again after interaction."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
-                    AI.Config.autoHideSettings = EditorGUILayout.Toggle(AI.Config.autoHideSettings, GUILayout.MaxWidth(cbWidth));
-                    GUILayout.EndHorizontal();
-
-                    GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField(UIStyles.Content("Extract Single Audio Files", "Will only extract single audio files for preview and not the full archive. Advantage is less space requirements for caching but each preview will potentially again need to go through the full archive to extract, leading to more waiting time."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     AI.Config.extractSingleFiles = EditorGUILayout.Toggle(AI.Config.extractSingleFiles, GUILayout.MaxWidth(cbWidth));
                     GUILayout.EndHorizontal();
@@ -821,6 +1061,12 @@ namespace AssetInventory
                     GUILayout.BeginHorizontal();
                     EditorGUILayout.LabelField(UIStyles.Content("Updates For Custom Packages", "Will show custom packages in the list of available updates even though they cannot be updated automatically."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
                     AI.Config.showCustomPackageUpdates = EditorGUILayout.Toggle(AI.Config.showCustomPackageUpdates, GUILayout.MaxWidth(cbWidth));
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(UIStyles.Content("Tile Margins", "Margins between tiles."), EditorStyles.boldLabel, GUILayout.Width(labelWidth));
+                    AI.Config.tileMargin = EditorGUILayout.DelayedIntField(AI.Config.tileMargin, GUILayout.Width(50));
+                    EditorGUILayout.LabelField("px");
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
@@ -887,14 +1133,15 @@ namespace AssetInventory
                     }
                     EndIndentBlock();
                 }
+                EditorGUILayout.EndFoldoutHeaderGroup();
             }
 
             GUILayout.EndScrollView();
             GUILayout.EndVertical();
-            GUILayout.FlexibleSpace();
             EditorGUILayout.Space();
 
             GUILayout.BeginVertical();
+            EditorGUILayout.Space();
             GUILayout.BeginVertical("Update", "window", GUILayout.Width(UIStyles.INSPECTOR_WIDTH), GUILayout.ExpandHeight(false));
             UIBlock("settings.updateintro", () =>
             {
@@ -903,129 +1150,62 @@ namespace AssetInventory
             });
             EditorGUILayout.Space();
 
-            bool easyMode = AI.Config.allowEasyMode && !ShowAdvanced();
             if (_usageCalculationInProgress)
             {
-                EditorGUILayout.LabelField("Other activity in progress...", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("Usage calculation in progress...", EditorStyles.boldLabel);
                 EditorGUILayout.Space();
-                EditorGUILayout.LabelField(AssetProgress.CurrentMain);
+                EditorGUILayout.LabelField(_usageCalculation.CurrentMain);
             }
             else
             {
-                if (easyMode)
+                if (AI.Actions.ActionsInProgress)
                 {
-                    if (AI.IndexingInProgress || AI.CurrentMain != null)
+                    EditorGUI.BeginDisabledGroup(AI.Actions.CancellationRequested);
+                    if (GUILayout.Button("Stop Actions"))
                     {
-                        EditorGUI.BeginDisabledGroup(AssetProgress.CancellationRequested && AssetStore.CancellationRequested);
-                        if (GUILayout.Button("Stop Indexing"))
-                        {
-                            AssetProgress.CancellationRequested = true;
-                            AssetStore.CancellationRequested = true;
-                        }
-                        EditorGUI.EndDisabledGroup();
+                        AI.Actions.CancelAll();
                     }
-                    else
+                    EditorGUI.EndDisabledGroup();
+
+                    // status
+                    EditorGUILayout.Space();
+                    EditorGUILayout.LabelField("Currently Running", EditorStyles.largeLabel);
+
+                    List<UpdateAction> actions = AI.Actions.GetRunningActions();
+                    foreach (UpdateAction action in actions)
                     {
-                        if (GUILayout.Button(UIStyles.Content("Update Index", "Update everything in one go and perform all necessary actions."), GUILayout.Height(40))) PerformFullUpdate();
+                        foreach (ActionProgress progress in action.progress)
+                        {
+                            if (!progress.IsRunning()) continue;
+
+                            EditorGUILayout.Space();
+
+                            EditorGUILayout.LabelField(action.name, EditorStyles.boldLabel);
+                            if (progress == null) continue;
+
+                            UIStyles.DrawProgressBar(progress.MainProgress / (float)progress.MainCount, $"{progress.MainProgress:N0}/{progress.MainCount:N0} - {progress.CurrentMain}");
+
+                            if (!string.IsNullOrWhiteSpace(progress.CurrentSub))
+                            {
+                                UIStyles.DrawProgressBar(progress.SubProgress / (float)progress.SubCount, $"{progress.SubProgress:N0}/{progress.SubCount:N0} - {progress.CurrentSub}");
+                            }
+                        }
                     }
                 }
                 else
                 {
-                    // local
-                    if (AI.IndexingInProgress)
+                    if (GUILayout.Button(UIStyles.Content("Run Actions", "Run all enabled actions in one go and perform all necessary updates."), GUILayout.Height(40)))
                     {
-                        EditorGUI.BeginDisabledGroup(AssetProgress.CancellationRequested);
-                        if (GUILayout.Button("Stop Indexing")) AssetProgress.CancellationRequested = true;
-                        EditorGUI.EndDisabledGroup();
+                        PerformFullUpdate();
                     }
-                    else
+                    if (AI.Actions.LastActionUpdate != DateTime.MinValue)
                     {
-                        if (GUILayout.Button(UIStyles.Content("Update Index (All-In-One)", "Update everything in one go and perform all necessary actions."))) PerformFullUpdate();
-                        EditorGUILayout.Space();
-                        if (GUILayout.Button(UIStyles.Content("Update Local Index", "Update all local folders and scan for cache and file changes."))) AI.RefreshIndex();
-                        if (ShowAdvanced() && GUILayout.Button(UIStyles.Content("Force Update Local Index", "Will parse all package metadata again (not the contents if unchanged) and update the index."))) AI.RefreshIndex(true);
-                    }
-                }
-            }
-
-            // status
-            if (AI.IndexingInProgress)
-            {
-                EditorGUILayout.Space();
-                if (AssetProgress.MainCount > 0)
-                {
-                    EditorGUILayout.LabelField("Package Progress", EditorStyles.boldLabel);
-                    UIStyles.DrawProgressBar(AssetProgress.MainProgress / (float)AssetProgress.MainCount, $"{AssetProgress.MainProgress:N0}/{AssetProgress.MainCount:N0}");
-                    EditorGUILayout.LabelField("Package", EditorStyles.boldLabel);
-
-                    string package = !string.IsNullOrEmpty(AssetProgress.CurrentMain) ? IOUtils.GetFileName(AssetProgress.CurrentMain) : "scanning...";
-                    EditorGUILayout.LabelField(UIStyles.Content(package, package), EditorStyles.wordWrappedLabel);
-                }
-
-                if (AssetProgress.SubCount > 0)
-                {
-                    EditorGUILayout.Space();
-                    EditorGUILayout.LabelField("File Progress", EditorStyles.boldLabel);
-                    UIStyles.DrawProgressBar(AssetProgress.SubProgress / (float)AssetProgress.SubCount, $"{AssetProgress.SubProgress:N0}/{AssetProgress.SubCount:N0} - " + IOUtils.GetFileName(AssetProgress.CurrentSub));
-                }
-            }
-
-            if (!easyMode)
-            {
-                // asset store
-                EditorGUILayout.Space();
-                EditorGUI.BeginDisabledGroup(AI.CurrentMain != null);
-                if (GUILayout.Button(UIStyles.Content("Update Asset Store Data", "Refresh purchases and metadata from Unity Asset Store."))) FetchAssetPurchases(false);
-                if (ShowAdvanced() && GUILayout.Button(UIStyles.Content("Force Update Asset Store Data", "Force updating all assets instead of only changed ones."))) FetchAssetPurchases(true);
-                EditorGUI.EndDisabledGroup();
-                if (AI.CurrentMain != null)
-                {
-                    if (GUILayout.Button("Cancel")) AssetStore.CancellationRequested = true;
-                }
-            }
-
-            if (AI.CurrentMain != null)
-            {
-                EditorGUILayout.Space();
-                EditorGUILayout.LabelField($"{AI.CurrentMain} {AI.MainProgress:N0}/{AI.MainCount:N0}", EditorStyles.centeredGreyMiniLabel);
-            }
-            else if (!AI.IndexingInProgress)
-            {
-                if (!ShowAdvanced())
-                {
-                    UIBlock("settings.whatwillhappen", () =>
-                    {
-                        if (GUILayout.Button(UIStyles.Content("What will happen?"), UIStyles.centerLinkLabel, GUILayout.ExpandWidth(true)))
+                        UIBlock("settings.lastupdate", () =>
                         {
-                            List<string> updates = new List<string>();
-                            if (AI.Config.indexAssetStore) updates.Add("Fetch purchases from Asset Store");
-                            if (AI.Config.indexAssetStore) updates.Add("Fetch details for each asset from Asset Store");
-                            if (AI.Config.indexAssetCache) updates.Add("Index asset cache");
-                            if (AI.Config.indexPackageCache) updates.Add("Index package cache");
-                            if (AI.Config.indexAdditionalFolders) updates.Add("Index additional folders");
-                            if (AI.Config.downloadAssets) updates.Add("Download and index new assets");
-                            if (AI.Config.indexAssetManager) updates.Add("Index asset manager organizations and projects");
-                            if (AI.Config.extractColors) updates.Add("Analyze colors");
-                            if (AI.Config.createAICaptions) updates.Add("Create AI captions");
-                            if (AI.Config.createBackups) updates.Add("Perform backups");
-
-                            for (int i = 0; i < updates.Count; i++)
-                            {
-                                updates[i] = $"{i + 1}. {updates[i]}";
-                            }
-                            string updateOrder = string.Join("\n", updates);
-
-                            EditorUtility.DisplayDialog("Update Order With Current Settings", updateOrder, "OK");
-                        }
-                    });
-                }
-                if (AI.LastIndexUpdate != DateTime.MinValue)
-                {
-                    UIBlock("settings.lastupdate", () =>
-                    {
-                        EditorGUILayout.Space();
-                        EditorGUILayout.LabelField($"Last updated {StringUtils.GetRelativeTimeDifference(AI.LastIndexUpdate)}", EditorStyles.centeredGreyMiniLabel);
-                    });
+                            EditorGUILayout.Space();
+                            EditorGUILayout.LabelField($"Last updated {StringUtils.GetRelativeTimeDifference(AI.Actions.LastActionUpdate)}", EditorStyles.centeredGreyMiniLabel);
+                        });
+                    }
                 }
             }
             GUILayout.EndVertical();
@@ -1041,12 +1221,12 @@ namespace AssetInventory
                 GUILabelWithText("Database Size", EditorUtility.FormatBytes(_dbSize), labelWidth2);
             });
 
-            if (_indexedPackageCount < _packageCount - _abandonedAssetsCount - _registryPackageCount && !AI.IndexingInProgress && !AI.Config.downloadAssets)
+            if (_indexedPackageCount < _packageCount - _abandonedAssetsCount - _registryPackageCount && !AI.Actions.ActionsInProgress) // && !AI.Config.downloadAssets)
             {
                 UIBlock("settings.hints.indexremaining", () =>
                 {
                     EditorGUILayout.Space();
-                    EditorGUILayout.HelpBox("To index the remaining assets, download them first. Tip: You can multi-select packages in the Packages view to start a bulk download.", MessageType.Info);
+                    EditorGUILayout.HelpBox("To index the remaining assets, download them first. You can multi-select packages in the Packages view to start a bulk download.", MessageType.Info);
                 });
             }
 
@@ -1101,13 +1281,12 @@ namespace AssetInventory
             _showMaintenance = EditorGUILayout.Foldout(_showMaintenance, "Maintenance");
             if (_showMaintenance)
             {
-                EditorGUI.BeginDisabledGroup(AI.CurrentMain != null || AI.IndexingInProgress);
+                EditorGUI.BeginDisabledGroup(AI.Actions.ActionsInProgress);
                 UIBlock("settings.actions.maintenance", () =>
                 {
                     if (GUILayout.Button("Maintenance Wizard..."))
                     {
-                        MaintenanceUI maintenanceUI = MaintenanceUI.ShowWindow();
-                        maintenanceUI.Prepare();
+                        MaintenanceUI.ShowWindow();
                     }
                 });
                 UIBlock("settings.actions.recreatepreviews", () =>
@@ -1123,34 +1302,46 @@ namespace AssetInventory
                 {
                     EditorGUILayout.Space();
                     EditorGUI.BeginDisabledGroup(AI.ClearCacheInProgress);
-                    if (GUILayout.Button(UIStyles.Content("Clear Cache", "Will delete the 'Extracted' folder used for speeding up asset access. It will be recreated automatically when needed."))) AI.ClearCache(() => UpdateStatistics(true));
+                    if (GUILayout.Button(UIStyles.Content("Clear Cache", "Will delete the 'Extracted' folder used for speeding up asset access. It will be recreated automatically when needed.")))
+                    {
+                        AI.ClearCache(() => UpdateStatistics(true));
+                    }
                     EditorGUI.EndDisabledGroup();
                 });
                 UIBlock("settings.actions.cleardb", () =>
                 {
                     if (GUILayout.Button(UIStyles.Content("Clear Database", "Will reset the database to its initial empty state. ALL data in the index will be lost.")))
                     {
-                        if (DBAdapter.DeleteDB())
+                        if (EditorUtility.DisplayDialog("Confirm", "This will reset the database to its initial empty state. ALL data in the index will be lost.", "Proceed", "Cancel"))
                         {
-                            AssetUtils.ClearCache();
-                            if (Directory.Exists(AI.GetPreviewFolder())) Directory.Delete(AI.GetPreviewFolder(), true);
+                            if (DBAdapter.DeleteDB())
+                            {
+                                AssetUtils.ClearCache();
+                                if (Directory.Exists(AI.GetPreviewFolder())) Directory.Delete(AI.GetPreviewFolder(), true);
+                            }
+                            else
+                            {
+                                EditorUtility.DisplayDialog("Error", "Database seems to be in use by another program and could not be cleared.", "OK");
+                            }
+                            UpdateStatistics(true);
+                            _assets = new List<AssetInfo>();
+                            _requireAssetTreeRebuild = true;
                         }
-                        else
-                        {
-                            EditorUtility.DisplayDialog("Error", "Database seems to be in use by another program and could not be cleared.", "OK");
-                        }
-                        UpdateStatistics(true);
-                        _assets = new List<AssetInfo>();
-                        _requireAssetTreeRebuild = true;
                     }
                 });
                 UIBlock("settings.actions.resetconfig", () =>
                 {
-                    if (GUILayout.Button(UIStyles.Content("Reset Configuration", "Will reset the configuration to default values, also deleting all Additional Folder configurations."))) AI.ResetConfig();
+                    if (GUILayout.Button(UIStyles.Content("Reset Configuration", "Will reset the configuration to default values, also deleting all Additional Folder configurations.")))
+                    {
+                        AI.ResetConfig();
+                    }
                 });
                 UIBlock("settings.actions.resetuiconfig", () =>
                 {
-                    if (GUILayout.Button(UIStyles.Content("Reset UI Customization", "Will reset the visibility of UI elements to initial default values."))) AI.ResetUICustomization();
+                    if (GUILayout.Button(UIStyles.Content("Reset UI Customization", "Will reset the visibility of UI elements to initial default values.")))
+                    {
+                        AI.ResetUICustomization();
+                    }
                     EditorGUILayout.Space();
                 });
 
@@ -1164,42 +1355,22 @@ namespace AssetInventory
                 {
                     UIBlock("settings.actions.closedb", () =>
                     {
-                        if (GUILayout.Button(UIStyles.Content("Close Database", "Will allow to safely copy the database in the file system. Database will be reopened automatically upon activity."))) DBAdapter.Close();
+                        if (GUILayout.Button(UIStyles.Content("Close Database", "Will allow to safely copy the database in the file system. Database will be reopened automatically upon activity.")))
+                        {
+                            DBAdapter.Close();
+                        }
                     });
                 }
 
                 UIBlock("settings.actions.dblocation", () =>
                 {
-                    EditorGUI.BeginDisabledGroup(AI.CurrentMain != null || AI.IndexingInProgress);
+                    EditorGUI.BeginDisabledGroup(AI.Actions.ActionsInProgress);
                     if (GUILayout.Button("Change Database Location...")) SetDatabaseLocation();
                     EditorGUI.EndDisabledGroup();
                 });
 
                 EditorGUI.EndDisabledGroup();
             }
-
-            UIBlock("settings.locations", () =>
-            {
-                EditorGUILayout.Space();
-                _showLocations = EditorGUILayout.Foldout(_showLocations, "Locations");
-                if (_showLocations)
-                {
-                    EditorGUILayout.LabelField(UIStyles.Content("Database", "To change, use the command in the Maintenance section"), EditorStyles.boldLabel);
-                    EditorGUILayout.SelectableLabel(AI.GetStorageFolder(), EditorStyles.wordWrappedLabel);
-
-                    EditorGUILayout.LabelField(UIStyles.Content("Access Cache", "To change, close Unity and adjust the 'cacheFolder' parameter directly in the configuration file."), EditorStyles.boldLabel);
-                    EditorGUILayout.SelectableLabel(AI.GetMaterializeFolder(), EditorStyles.wordWrappedLabel);
-
-                    EditorGUILayout.LabelField("Preview Cache", EditorStyles.boldLabel);
-                    EditorGUILayout.SelectableLabel(AI.GetPreviewFolder(), EditorStyles.wordWrappedLabel);
-
-                    EditorGUILayout.LabelField(UIStyles.Content("Backup", "To change, go to the Backup settings"), EditorStyles.boldLabel);
-                    EditorGUILayout.SelectableLabel(AI.GetBackupFolder(), EditorStyles.wordWrappedLabel);
-
-                    EditorGUILayout.LabelField(UIStyles.Content("Configuration", "To change, either copy the json file into your project to use a project-specific configuration or use the 'ASSETINVENTORY_CONFIG_PATH' environment variable to define a new global location (see documentation)."), EditorStyles.boldLabel);
-                    EditorGUILayout.SelectableLabel(AI.UsedConfigLocation, EditorStyles.wordWrappedLabel);
-                }
-            });
 
             GUILayout.EndScrollView();
             GUILayout.EndVertical();
@@ -1239,60 +1410,6 @@ namespace AssetInventory
             }
         }
 
-        private void SelectBackupFolder()
-        {
-            string folder = EditorUtility.OpenFolderPanel("Select storage folder for backups", AI.Config.backupFolder, "");
-            if (!string.IsNullOrEmpty(folder))
-            {
-                AI.Config.backupFolder = Path.GetFullPath(folder);
-                AI.SaveConfig();
-            }
-        }
-
-        private void SelectAssetCacheFolder()
-        {
-            string folder = EditorUtility.OpenFolderPanel("Select asset cache folder of Unity (ending with 'Asset Store-5.x')", AI.Config.assetCacheLocation, "");
-            if (!string.IsNullOrEmpty(folder))
-            {
-                if (Path.GetFileName(folder).ToLowerInvariant() != AI.ASSET_STORE_FOLDER_NAME.ToLowerInvariant())
-                {
-                    EditorUtility.DisplayDialog("Error", $"Not a valid Unity asset cache folder. It should point to a folder ending with '{AI.ASSET_STORE_FOLDER_NAME}'", "OK");
-                    return;
-                }
-                AI.Config.assetCacheLocation = Path.GetFullPath(folder);
-                AI.SaveConfig();
-
-                AI.GetObserver().SetPath(AI.Config.assetCacheLocation);
-            }
-        }
-
-        private void SelectPackageCacheFolder()
-        {
-            string folder = EditorUtility.OpenFolderPanel("Select package cache folder of Unity", AI.Config.packageCacheLocation, "");
-            if (!string.IsNullOrEmpty(folder))
-            {
-                AI.Config.packageCacheLocation = Path.GetFullPath(folder);
-                AI.SaveConfig();
-            }
-        }
-
-        private void SelectImportFolder()
-        {
-            string folder = EditorUtility.OpenFolderPanel("Select folder for imports", AI.Config.importFolder, "");
-            if (!string.IsNullOrEmpty(folder))
-            {
-                if (!folder.ToLowerInvariant().StartsWith(Application.dataPath.ToLowerInvariant()))
-                {
-                    EditorUtility.DisplayDialog("Error", "Folder must be inside current project", "OK");
-                    return;
-                }
-
-                // store only part relative to /Assets
-                AI.Config.importFolder = folder.Substring(Path.GetDirectoryName(Application.dataPath).Length + 1);
-                AI.SaveConfig();
-            }
-        }
-
         private async void CalcFolderSizes()
         {
             if (_calculatingFolderSizes) return;
@@ -1309,13 +1426,7 @@ namespace AssetInventory
 
         private void PerformFullUpdate()
         {
-            AI.RefreshIndex();
-
-            if (AI.Config.indexAssetStore)
-            {
-                // start also asset download if not already done before manually
-                if (string.IsNullOrEmpty(AI.CurrentMain)) FetchAssetPurchases(false);
-            }
+            AI.Actions.RunActions();
         }
 
         private void SetDatabaseLocation()
@@ -1339,14 +1450,7 @@ namespace AssetInventory
                 return;
             }
 
-            // target must be empty
-            if (!IOUtils.IsDirectoryEmpty(targetFolder))
-            {
-                EditorUtility.DisplayDialog("Error", "The target folder needs to be empty or contain an existing database.", "OK");
-                return;
-            }
-
-            if (EditorUtility.DisplayDialog("Keep Old Database", "Should a new database be created or the current one moved?", "New", "Move"))
+            if (EditorUtility.DisplayDialog("Keep Old Database", "Should a new database be created or the current one moved?", "New", "Move..."))
             {
                 AI.SwitchDatabase(targetFolder);
                 ReloadLookups();
@@ -1356,9 +1460,9 @@ namespace AssetInventory
                 return;
             }
 
-            _previewInProgress = true;
-            AI.MoveDatabase(targetFolder);
-            _previewInProgress = false;
+            // show dedicated UI since the process is more complex now
+            DBLocationUI relocateUI = DBLocationUI.ShowWindow();
+            relocateUI.Init(targetFolder);
         }
 
         private IEnumerator UpdateStatisticsDelayed()
@@ -1387,6 +1491,7 @@ namespace AssetInventory
             _packageCount = _assets.Count;
             _indexedPackageCount = _assets.Count(a => a.FileCount > 0);
             _subPackageCount = _assets.Count(a => a.ParentId > 0);
+            _backupPackageCount = _assets.Count(a => a.Backup);
             _aiPackageCount = _assets.Count(a => a.UseAI);
             _deprecatedAssetsCount = _assets.Count(a => a.IsDeprecated);
             _abandonedAssetsCount = _assets.Count(a => a.IsAbandoned);

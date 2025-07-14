@@ -1,4 +1,5 @@
 ﻿// reference for built-in icons: https://github.com/halak/unity-editor-icons
+// alternative: https://github.com/Doppelkeks/Unity-Editor-Icons
 
 using System;
 using System.Linq;
@@ -23,9 +24,12 @@ namespace AssetInventory
         public const int TAG_OUTER_MARGIN = 20;
         public const string INDENT = "  ";
         public const int INDENT_WIDTH = 8;
+        public const float BIG_BUTTON_HEIGHT = 50f;
 
         public static readonly string[] FolderTypes = {"Unity Packages", "Media Folder", "Archives", "Dev Packages"};
         public static readonly string[] MediaTypes = {"-All Media-", "-All Files-", string.Empty, "Audio", "Images", "Models", string.Empty, "-Custom File Pattern-"};
+
+        public static readonly Color errorColor = EditorGUIUtility.isProSkin ? new Color(1f, 0.5f, 0.5f) : Color.red;
 
         private static readonly GUIContent GUIText = new GUIContent();
         private static readonly GUIContent GUIImage = new GUIContent();
@@ -43,7 +47,17 @@ namespace AssetInventory
         public static readonly GUIStyle toggleButtonStyleNormal = new GUIStyle("button");
         public static readonly GUIStyle toggleButtonStyleToggled = CreateToggledStyle();
 
-        public static readonly GUIStyle wrappedLinkLabel = new GUIStyle("linkLabel")
+        public static readonly GUIStyle wrappedLinkLabel = new GUIStyle(EditorStyles.linkLabel)
+        {
+            wordWrap = true
+        };
+
+        public static readonly GUIStyle greyMiniLabel = new GUIStyle(EditorStyles.centeredGreyMiniLabel)
+        {
+            alignment = TextAnchor.MiddleLeft
+        };
+
+        public static readonly GUIStyle wrappedButton = new GUIStyle(GUI.skin.button)
         {
             wordWrap = true
         };
@@ -58,6 +72,10 @@ namespace AssetInventory
         public static readonly GUIStyle richText = new GUIStyle(EditorStyles.wordWrappedLabel)
         {
             richText = true
+        };
+        public static readonly GUIStyle miniLabelRight = new GUIStyle(EditorStyles.miniLabel)
+        {
+            alignment = TextAnchor.MiddleRight
         };
 
         public static Texture2D LoadTexture(string name)
@@ -81,7 +99,8 @@ namespace AssetInventory
                 alignment = TextAnchor.MiddleCenter,
                 fontSize = 10,
                 imagePosition = ImagePosition.ImageAbove,
-                wordWrap = true
+                wordWrap = true,
+                margin = new RectOffset(AI.Config.tileMargin, AI.Config.tileMargin, AI.Config.tileMargin, AI.Config.tileMargin)
             };
 
             return baseStyle;
@@ -113,6 +132,7 @@ namespace AssetInventory
         public static readonly GUIStyle entryStyle = new GUIStyle(EditorStyles.miniLabel) {fontSize = ENTRY_FONT_SIZE, fixedHeight = ENTRY_FIXED_HEIGHT};
         public static readonly GUIStyle toggleStyle = new GUIStyle(EditorStyles.toggle) {fixedWidth = TOGGLE_FIXED_WIDTH, fixedHeight = ENTRY_FIXED_HEIGHT};
         public static readonly GUIStyle whiteCenter = new GUIStyle {alignment = TextAnchor.MiddleCenter, normal = new GUIStyleState {textColor = Color.white}};
+        public static readonly GUIStyle blackCenter = new GUIStyle {alignment = TextAnchor.MiddleCenter, normal = new GUIStyleState {textColor = Color.black}};
         public static readonly GUIStyle centerLabel = new GUIStyle(GUI.skin.label) {alignment = TextAnchor.MiddleCenter};
         public static readonly GUIStyle centeredWhiteMiniLabel = new GUIStyle(EditorStyles.centeredGreyMiniLabel) {normal = new GUIStyleState {textColor = Color.white}};
         public static readonly GUIStyle rightLabel = new GUIStyle(GUI.skin.label) {alignment = TextAnchor.MiddleRight};
@@ -129,15 +149,14 @@ namespace AssetInventory
             Color oldColor = GUI.color;
             GUI.color = color;
             using (new EditorGUILayout.HorizontalScope(tag,
-                GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(false),
-                GUILayout.Width(tag.CalcSize(Content(name)).x + (style != TagStyle.Neutral ? EditorGUIUtility.singleLineHeight : 0))))
+                       GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(false),
+                       GUILayout.Width(tag.CalcSize(Content(name)).x + (style != TagStyle.Neutral ? EditorGUIUtility.singleLineHeight : 0))))
             {
                 GUI.color = GetHSPColor(color);
                 GUIStyle readableText = ReadableText(color);
 
-                // FIXME: only here until dark background color issue is solved, show all text white until then
-                GUI.color = Color.white;
-                readableText.normal.textColor = Color.white;
+                GUI.color = EditorGUIUtility.isProSkin ? Color.white : Color.black;
+                readableText.normal.textColor = GUI.color;
 
                 switch (style)
                 {
@@ -150,9 +169,10 @@ namespace AssetInventory
 
                     case TagStyle.Remove:
                         GUILayout.Label(name, readableText);
+                        GUI.color = oldColor;
                         if (GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash", "|Remove Tag").image,
-                            EditorStyles.label, GUILayout.Width(EditorGUIUtility.singleLineHeight),
-                            GUILayout.Height(EditorGUIUtility.singleLineHeight)))
+                                EditorStyles.label, GUILayout.Width(EditorGUIUtility.singleLineHeight),
+                                GUILayout.Height(EditorGUIUtility.singleLineHeight)))
                         {
                             action?.Invoke();
                         }
@@ -165,8 +185,8 @@ namespace AssetInventory
                     case TagStyle.ColorSelect:
                         GUILayout.Label(name, readableText);
                         if (GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash", "|Remove Tag").image,
-                            EditorStyles.label, GUILayout.Width(EditorGUIUtility.singleLineHeight),
-                            GUILayout.Height(EditorGUIUtility.singleLineHeight)))
+                                EditorStyles.label, GUILayout.Width(EditorGUIUtility.singleLineHeight),
+                                GUILayout.Height(EditorGUIUtility.singleLineHeight)))
                         {
                             action?.Invoke();
                         }
@@ -182,8 +202,8 @@ namespace AssetInventory
             GUI.color = color;
             // FIXME: broken, background not at correct position yet
             using (new EditorGUILayout.HorizontalScope(tag,
-                GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(false),
-                GUILayout.Width(tag.CalcSize(Content(name)).x + (style != TagStyle.Neutral ? EditorGUIUtility.singleLineHeight : 0))))
+                       GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(false),
+                       GUILayout.Width(tag.CalcSize(Content(name)).x + (style != TagStyle.Neutral ? EditorGUIUtility.singleLineHeight : 0))))
             {
                 GUI.color = GetHSPColor(color);
                 switch (style)
@@ -217,10 +237,11 @@ namespace AssetInventory
             return 0.299 * color.r + 0.587 * color.g + 0.114 * color.b < 0.5f ? Color.white : new Color(0.1f, 0.1f, 0.1f);
         }
 
-        public static GUIStyle ReadableText(Color color)
+        public static GUIStyle ReadableText(Color color, bool wrap = false)
         {
             GUIStyle style = new GUIStyle(EditorStyles.label);
             style.normal.textColor = GetHSPColor(color);
+            style.wordWrap = wrap;
             return style;
         }
 

@@ -450,7 +450,7 @@ namespace AssetInventory
 
             List<string> result = new List<string>();
 
-            if (!Directory.Exists(targetFolder)) Directory.CreateDirectory(targetFolder);
+            Directory.CreateDirectory(targetFolder);
 
             IAsset cloudAsset = await GetAssetAsync(asset, assetFile);
             if (cloudAsset == null)
@@ -473,7 +473,7 @@ namespace AssetInventory
 
                 string targetFile = Path.Combine(targetFolder, file.Descriptor.Path);
                 string targetParentFolder = Path.GetDirectoryName(targetFile);
-                if (!Directory.Exists(targetParentFolder)) Directory.CreateDirectory(targetParentFolder);
+                Directory.CreateDirectory(targetParentFolder);
 
                 // download file, keep folder structure intact
                 tasks.Add(DownloadFileAsync(file, targetFile, cts.Token));
@@ -831,16 +831,6 @@ namespace AssetInventory
                 AssetVersions ??= new List<IAsset>();
                 AssetVersions.Add(asset);
             }
-        }
-
-        public async Task FreezeVersion(IAsset asset)
-        {
-            int sequenceNumber = await asset.FreezeAsync("Use case coding example submission.", CancellationToken.None);
-
-            List<Task> tasks = AssetVersions.Select(version => version.RefreshAsync(CancellationToken.None)).ToList();
-            await Task.WhenAll(tasks);
-
-            Debug.Log($"Version frozen with sequence number: {sequenceNumber}");
         }
 
         public async Task CreateVersion(IAsset asset)

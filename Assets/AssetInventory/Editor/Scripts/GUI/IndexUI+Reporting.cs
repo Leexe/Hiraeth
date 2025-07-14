@@ -16,6 +16,7 @@ namespace AssetInventory
     {
         private bool _usageCalculationInProgress;
         private bool _usageCalculationDone;
+        private AssetUsage _usageCalculation;
         private Vector2 _reportScrollPos;
 
         private List<AssetInfo> _assetUsage;
@@ -125,6 +126,12 @@ namespace AssetInventory
                 ReportTreeView.OnGUI(new Rect(left, yStart, width, position.height - yStart));
                 GUILayout.EndVertical();
             }
+            else
+            {
+                GUILayout.FlexibleSpace();
+                EditorGUILayout.LabelField("Analyze the current project first to see results.", EditorStyles.centeredGreyMiniLabel);
+                GUILayout.FlexibleSpace();
+            }
             GUILayout.EndVertical();
             GUILayout.FlexibleSpace();
 
@@ -134,26 +141,30 @@ namespace AssetInventory
 
             if (_usageCalculationInProgress)
             {
-                EditorGUI.BeginDisabledGroup(AssetProgress.CancellationRequested);
-                if (GUILayout.Button("Stop Identification")) AssetProgress.CancellationRequested = true;
+                EditorGUI.BeginDisabledGroup(_usageCalculation.CancellationRequested);
+                if (GUILayout.Button("Stop Identification")) _usageCalculation.CancellationRequested = true;
                 EditorGUI.EndDisabledGroup();
 
                 EditorGUILayout.LabelField("Identification Progress", EditorStyles.boldLabel);
-                UIStyles.DrawProgressBar(AssetProgress.MainProgress / (float)AssetProgress.MainCount, $"{AssetProgress.MainProgress}/{AssetProgress.MainCount}");
-                EditorGUILayout.LabelField(AssetProgress.CurrentMain);
+                UIStyles.DrawProgressBar(_usageCalculation.MainProgress / (float)_usageCalculation.MainCount, $"{_usageCalculation.MainProgress}/{_usageCalculation.MainCount}");
+                EditorGUILayout.LabelField(_usageCalculation.CurrentMain);
                 EditorGUILayout.Space();
             }
             else
             {
-                if (GUILayout.Button("Identify Used Packages", GUILayout.Height(50))) CalculateAssetUsage();
+                if (GUILayout.Button("Identify Used Packages", GUILayout.Height(UIStyles.BIG_BUTTON_HEIGHT))) CalculateAssetUsage();
             }
             UIBlock("reporting.actions.export", () =>
             {
                 if (GUILayout.Button("Export Data..."))
                 {
                     ExportUI exportUI = ExportUI.ShowWindow();
-                    exportUI.Init(_assets, 0);
+                    exportUI.Init(_assets, 1, reportMchState?.visibleColumns);
                 }
+            });
+            UIBlock("reporting.actions.freebies", () =>
+            {
+                if (GUILayout.Button("Find Freebies...")) FreebieUI.ShowWindow();
             });
             EditorGUILayout.Space();
             GUILayout.EndVertical();
@@ -162,7 +173,7 @@ namespace AssetInventory
             _reportScrollPos = GUILayout.BeginScrollView(_reportScrollPos, false, false, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.ExpandWidth(true));
             if (_selectedReportEntry != null)
             {
-                DrawPackageDetails(_selectedReportEntry, true);
+                DrawPackageInfo(_selectedReportEntry, true);
                 EditorGUILayout.Space();
             }
             if (_selectedReportEntry == null && _selectedReportEntries != null && _selectedReportEntries.Count > 0)
@@ -215,7 +226,7 @@ namespace AssetInventory
                             EditorGUILayout.HelpBox("The following package was identified correctly but is not yet indexed in the local database.", MessageType.Info);
                             EditorGUILayout.Space();
                         }
-                        DrawPackageDetails(info, false, true, false);
+                        DrawPackageInfo(info, false, true, false);
                     }
                 }
                 GUILayout.EndVertical();
@@ -228,44 +239,50 @@ namespace AssetInventory
         private async void CalculateAssetUsage()
         {
             if (_usageCalculationInProgress) return;
-
-            AssetProgress.CancellationRequested = false;
             _usageCalculationInProgress = true;
 
-            _assetUsage = await new AssetUsage().Calculate();
-            _identifiedFiles = _assetUsage.Where(info => info.CurrentState != Asset.State.Unknown).ToList();
-
-            // add installed packages
-            Dictionary<string, PackageInfo> packageCollection = AssetStore.GetProjectPackages();
-            if (packageCollection != null)
+            try
             {
-                int unmatchedCount = 0;
-                foreach (PackageInfo packageInfo in packageCollection.Values)
+                _usageCalculation = new AssetUsage();
+                _assetUsage = await _usageCalculation.Calculate();
+                _identifiedFiles = _assetUsage.Where(info => info.CurrentState != Asset.State.Unknown).ToList();
+
+                // add installed packages
+                Dictionary<string, PackageInfo> packageCollection = AssetStore.GetProjectPackages();
+                if (packageCollection != null)
                 {
-                    if (packageInfo.source == PackageSource.BuiltIn) continue;
-
-                    AssetInfo matchedAsset = _assets.FirstOrDefault(info => info.SafeName == packageInfo.name);
-                    if (matchedAsset == null)
+                    int unmatchedCount = 0;
+                    foreach (PackageInfo packageInfo in packageCollection.Values)
                     {
-                        Debug.Log($"Registry package '{packageInfo.name}' is not yet indexed, information will be incomplete.");
-                        matchedAsset = new AssetInfo();
-                        matchedAsset.AssetSource = Asset.Source.RegistryPackage;
-                        matchedAsset.SafeName = packageInfo.name;
-                        matchedAsset.DisplayName = packageInfo.displayName;
-                        matchedAsset.Version = packageInfo.version;
-                        matchedAsset.Id = int.MaxValue - unmatchedCount;
-                        matchedAsset.AssetId = int.MaxValue - unmatchedCount;
-                        unmatchedCount++;
-                    }
-                    _assetUsage.Add(matchedAsset);
-                }
-            }
-            AI.ResolveParents(_assetUsage, _assets);
+                        if (packageInfo.source == PackageSource.BuiltIn) continue;
 
-            _usedPackages = _assetUsage.GroupBy(a => a.AssetId).Select(a => a.First()).ToDictionary(a => a.AssetId, a => a);
-            _paidPackages = _usedPackages.Where(a => a.Value.GetPrice() > 0).Select(a => a.Value).ToList();
-            _licenses = new List<string> {"Standard Unity Asset Store EULA"};
-            _licenses.AddRange(_usedPackages.Where(a => !string.IsNullOrWhiteSpace(a.Value.License)).Select(a => a.Value.License).Distinct());
+                        AssetInfo matchedAsset = _assets.FirstOrDefault(info => info.SafeName == packageInfo.name);
+                        if (matchedAsset == null)
+                        {
+                            Debug.Log($"Registry package '{packageInfo.name}' is not yet indexed, information will be incomplete.");
+                            matchedAsset = new AssetInfo();
+                            matchedAsset.AssetSource = Asset.Source.RegistryPackage;
+                            matchedAsset.SafeName = packageInfo.name;
+                            matchedAsset.DisplayName = packageInfo.displayName;
+                            matchedAsset.Version = packageInfo.version;
+                            matchedAsset.Id = int.MaxValue - unmatchedCount;
+                            matchedAsset.AssetId = int.MaxValue - unmatchedCount;
+                            unmatchedCount++;
+                        }
+                        _assetUsage.Add(matchedAsset);
+                    }
+                }
+                AI.ResolveParents(_assetUsage, _assets);
+
+                _usedPackages = _assetUsage.GroupBy(a => a.AssetId).Select(a => a.First()).ToDictionary(a => a.AssetId, a => a);
+                _paidPackages = _usedPackages.Where(a => a.Value.GetPrice() > 0).Select(a => a.Value).ToList();
+                _licenses = new List<string> {"Standard Unity Asset Store EULA"};
+                _licenses.AddRange(_usedPackages.Where(a => !string.IsNullOrWhiteSpace(a.Value.License)).Select(a => a.Value.License).Distinct());
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Could not calculate asset usage: {e.Message}");
+            }
 
             _requireReportTreeRebuild = true;
             _requireAssetTreeRebuild = true;

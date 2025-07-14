@@ -12,8 +12,6 @@ namespace AssetInventory
 
         public async Task Index(FolderSpec spec)
         {
-            ResetState(false);
-
             if (string.IsNullOrEmpty(spec.location)) return;
 
             string fullLocation = spec.GetLocation(true);
@@ -23,18 +21,17 @@ namespace AssetInventory
             MainCount = files.Length;
             MainProgress = 1; // small hack to trigger UI update in the end
 
-            int progressId = MetaProgress.Start("Updating dev package index");
             for (int i = 0; i < files.Length; i++)
             {
                 if (CancellationRequested) break;
                 if (i % BREAK_INTERVAL == 0) await Task.Yield(); // let editor breath in case many files are already indexed
-                await Cooldown.Do();
+                await AI.Cooldown.Do();
 
                 string package = files[i];
                 Asset asset = await HandlePackage(package);
                 if (asset == null) continue;
 
-                MetaProgress.Report(progressId, i + 1, files.Length, package);
+                MetaProgress.Report(ProgressId, i + 1, files.Length, package);
                 MainCount = files.Length;
                 CurrentMain = asset.DisplayName + " (" + EditorUtility.FormatBytes(asset.PackageSize) + ")";
                 MainProgress = i + 1;
@@ -47,14 +44,12 @@ namespace AssetInventory
 
                 if (spec.assignTag && !string.IsNullOrWhiteSpace(spec.tag))
                 {
-                    Tagging.AddTagAssignment(new AssetInfo(asset), spec.tag, TagAssignment.Target.Package);
+                    Tagging.AddAssignment(new AssetInfo(asset), spec.tag, TagAssignment.Target.Package);
                 }
             }
-            MetaProgress.Remove(progressId);
-            ResetState(true);
         }
 
-        private static async Task<Asset> HandlePackage(string package)
+        private async Task<Asset> HandlePackage(string package)
         {
             Package info = PackageImporter.ReadPackageFile(package);
             if (info == null) return null;
@@ -72,7 +67,7 @@ namespace AssetInventory
             if (tagsChanged)
             {
                 Tagging.LoadTags();
-                Tagging.LoadTagAssignments();
+                Tagging.LoadAssignments();
             }
 
             return asset;
@@ -80,26 +75,25 @@ namespace AssetInventory
 
         public async Task IndexDetails(Asset asset)
         {
-            ResetState(false);
-
             MainCount = 1;
             CurrentMain = "Indexing dev package";
 
             FolderSpec importSpec = GetDefaultImportSpec();
             importSpec.createPreviews = true; // TODO: derive from additional folder settings
             await IndexPackage(asset, importSpec);
-
-            ResetState(true);
         }
 
-        private static async Task IndexPackage(Asset asset, FolderSpec spec)
+        private async Task IndexPackage(Asset asset, FolderSpec spec)
         {
             await RemovePersistentCacheEntry(asset);
 
             FolderSpec importSpec = GetDefaultImportSpec();
             importSpec.location = asset.GetLocation(true);
             importSpec.createPreviews = spec.createPreviews;
-            await new MediaImporter().Index(importSpec, asset, false, true);
+
+            MediaImporter mediaImporter = new MediaImporter();
+            mediaImporter.WithProgress("Updating files index");
+            await mediaImporter.Index(importSpec, asset, false, true);
 
             MarkDone(asset);
         }

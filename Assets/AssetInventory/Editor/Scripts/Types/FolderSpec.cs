@@ -14,6 +14,7 @@ namespace AssetInventory
         public string relativeKey;
         public string location;
         public string pattern;
+        public string excludedExtensions;
         public bool createPreviews = true;
         public bool removeOrphans = true;
         public bool attachToPackage = true;

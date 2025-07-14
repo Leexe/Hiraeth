@@ -45,6 +45,7 @@ namespace AssetInventory
             Outdated,
             Popularity,
             Materialized,
+            ForeignId,
             InternalState
         }
 
@@ -113,6 +114,8 @@ namespace AssetInventory
             Texture checkmarkIcon = UIStyles.IconContent("Valid", "d_Valid", "|Indexed").image;
             Rect rect = cellRect;
 
+            if (item.Data.AssetId <= 0 && column != Columns.Name) return;
+
             switch (column)
             {
                 case Columns.AICaptions:
@@ -149,6 +152,10 @@ namespace AssetInventory
 
                 case Columns.FileCount:
                     EditorGUI.LabelField(cellRect, item.Data.FileCount.ToString());
+                    break;
+
+                case Columns.ForeignId:
+                    if (item.Data.ForeignId > 0) EditorGUI.LabelField(cellRect, item.Data.ForeignId.ToString());
                     break;
 
                 case Columns.HDRP:
@@ -193,7 +200,7 @@ namespace AssetInventory
                     }
                     else
                     {
-                        Texture folderIcon = EditorGUIUtility.IconContent("d_Folder Icon").image;
+                        Texture folderIcon = UIStyles.IconContent("Folder Icon", "d_Folder Icon").image;
                         GUI.DrawTexture(rect, folderIcon);
                     }
 
@@ -226,7 +233,7 @@ namespace AssetInventory
                     break;
 
                 case Columns.Rating:
-                    EditorGUI.LabelField(cellRect, item.Data.AssetRating);
+                    EditorGUI.LabelField(cellRect, $"{item.Data.AssetRating:N1}");
                     break;
 
                 case Columns.RatingCount:
@@ -241,7 +248,10 @@ namespace AssetInventory
                     break;
 
                 case Columns.Size:
-                    EditorGUI.LabelField(cellRect, EditorUtility.FormatBytes(item.Data.PackageSize));
+                    if (item.Data.PackageSize > 0)
+                    {
+                        EditorGUI.LabelField(cellRect, EditorUtility.FormatBytes(item.Data.PackageSize));
+                    }
                     break;
 
                 case Columns.Source:
@@ -264,7 +274,10 @@ namespace AssetInventory
                     break;
 
                 case Columns.Update:
-                    if (item.Data.IsUpdateAvailable()) RenderIcon(rect, checkmarkIcon);
+                    if (item.Data.IsUpdateAvailable())
+                    {
+                        RenderIcon(rect, checkmarkIcon);
+                    }
                     break;
 
                 case Columns.UpdateDate:
@@ -302,7 +315,7 @@ namespace AssetInventory
                         if (updateAvailable)
                         {
                             Vector2 size = EditorStyles.label.CalcSize(version);
-                            Texture statusIcon = EditorGUIUtility.IconContent("Update-Available", "|Update Available").image;
+                            Texture statusIcon = UIStyles.IconContent("preAudioLoopOff", "Update-Available", "|Update Available").image;
                             rect.x += Mathf.Min(size.x, cellRect.width - 16) + 2;
                             rect.y += 1;
                             rect.width = 16;
@@ -313,6 +326,45 @@ namespace AssetInventory
                     }
                     break;
 
+                default:
+#if UNITY_2021_2_OR_NEWER
+                    int metaId = multiColumnHeader.GetColumn((int)column).userData;
+                    MetadataInfo metaInfo = item.Data.PackageMetadata.FirstOrDefault(pm => pm.DefinitionId == metaId);
+                    if (metaInfo == null) break;
+
+                    switch (metaInfo.Type)
+                    {
+                        case MetadataDefinition.DataType.Boolean:
+                            if (metaInfo.BoolValue) RenderIcon(rect, checkmarkIcon);
+                            break;
+
+                        case MetadataDefinition.DataType.Text:
+                        case MetadataDefinition.DataType.BigText:
+                        case MetadataDefinition.DataType.SingleSelect:
+                            EditorGUI.LabelField(cellRect, metaInfo.StringValue, EditorStyles.wordWrappedLabel);
+                            break;
+
+                        case MetadataDefinition.DataType.Number:
+                            EditorGUI.LabelField(cellRect, metaInfo.IntValue.ToString());
+                            break;
+
+                        case MetadataDefinition.DataType.DecimalNumber:
+                            EditorGUI.LabelField(cellRect, $"{metaInfo.FloatValue:N1}");
+                            break;
+
+                        case MetadataDefinition.DataType.Url:
+                            if (GUI.Button(cellRect, metaInfo.StringValue?.Replace("https://", "").Replace("www.", ""), EditorStyles.linkLabel))
+                            {
+                                Application.OpenURL(metaInfo.StringValue);
+                            }
+                            break;
+
+                        case MetadataDefinition.DataType.Date:
+                            EditorGUI.LabelField(cellRect, metaInfo.DateTimeValue.ToShortDateString());
+                            break;
+                    }
+#endif
+                    break;
             }
         }
 
@@ -373,13 +425,34 @@ namespace AssetInventory
             columns[(int)Columns.Deprecated] = GetCheckmarkColumn("Deprecated");
             columns[(int)Columns.Outdated] = GetCheckmarkColumn("Outdated");
             columns[(int)Columns.Materialized] = GetCheckmarkColumn("Materialized");
+            columns[(int)Columns.ForeignId] = GetTextColumn("Foreign Id");
             columns[(int)Columns.InternalState] = GetTextColumn("Processing");
+
+            List<MetadataDefinition> metadataDefs = Metadata.LoadDefinitions();
+            if (metadataDefs.Any())
+            {
+                int offset = 100;
+                columns[offset] = GetTextColumn(string.Empty);
+                foreach (MetadataDefinition mDef in metadataDefs)
+                {
+                    switch (mDef.Type)
+                    {
+                        case MetadataDefinition.DataType.Boolean:
+                            columns[offset + mDef.Id] = GetCheckmarkColumn(mDef.Name, mDef.Id);
+                            break;
+
+                        default:
+                            columns[offset + mDef.Id] = GetTextColumn(mDef.Name, 150, mDef.Id);
+                            break;
+                    }
+                }
+            }
 
             MultiColumnHeaderState state = new MultiColumnHeaderState(columns.OrderBy(c => c.Key).Select(c => c.Value).ToArray());
             return state;
         }
 
-        private static MultiColumnHeaderState.Column GetCheckmarkColumn(string name)
+        private static MultiColumnHeaderState.Column GetCheckmarkColumn(string name, int idx = 0)
         {
             return new MultiColumnHeaderState.Column
             {
@@ -393,11 +466,14 @@ namespace AssetInventory
                 minWidth = 30,
                 maxWidth = 80,
                 autoResize = false,
-                allowToggleVisibility = true
+                allowToggleVisibility = true,
+#if UNITY_2021_2_OR_NEWER
+                userData = idx
+#endif
             };
         }
 
-        private static MultiColumnHeaderState.Column GetTextColumn(string name, int width = 150)
+        private static MultiColumnHeaderState.Column GetTextColumn(string name, int width = 150, int idx = 0)
         {
             return new MultiColumnHeaderState.Column
             {
@@ -410,7 +486,10 @@ namespace AssetInventory
                 width = width,
                 minWidth = 30,
                 autoResize = false,
-                allowToggleVisibility = true
+                allowToggleVisibility = true,
+#if UNITY_2021_2_OR_NEWER
+                userData = idx
+#endif
             };
         }
     }

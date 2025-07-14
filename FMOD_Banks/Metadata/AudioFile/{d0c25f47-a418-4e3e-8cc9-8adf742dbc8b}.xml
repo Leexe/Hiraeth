@@ -2,10 +2,7 @@
 <objects serializationModel="Studio.02.03.00">
 	<object class="AudioFile" id="{d0c25f47-a418-4e3e-8cc9-8adf742dbc8b}">
 		<property name="assetPath">
-			<value>Hireath Victory.wav</value>
-		</property>
-		<property name="isStreaming">
-			<value>true</value>
+			<value>Hiraeth Start.wav</value>
 		</property>
 		<property name="frequencyInKHz">
 			<value>44.0999985</value>

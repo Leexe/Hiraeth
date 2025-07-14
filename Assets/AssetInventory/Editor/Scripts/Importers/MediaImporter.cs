@@ -15,19 +15,17 @@ namespace AssetInventory
 
         public async Task Index(FolderSpec spec, Asset attachedAsset = null, bool storeRelativePath = false, bool actAsSubImporter = false)
         {
-            if (!actAsSubImporter) ResetState(false);
-
             if (string.IsNullOrEmpty(spec.location)) return;
 
             string fullLocation = spec.GetLocation(true).Replace("\\", "/");
             if (!Directory.Exists(fullLocation)) return;
 
             List<string> searchPatterns = new List<string>();
-            List<string> types = new List<string>();
+            List<AI.AssetGroup> types = new List<AI.AssetGroup>();
             switch (spec.scanFor)
             {
                 case 0:
-                    types.AddRange(new[] {"Audio", "Images", "Models"});
+                    types.AddRange(new[] {AI.AssetGroup.Audio, AI.AssetGroup.Images, AI.AssetGroup.Models});
                     break;
 
                 case 1:
@@ -35,15 +33,15 @@ namespace AssetInventory
                     break;
 
                 case 3:
-                    types.Add("Audio");
+                    types.Add(AI.AssetGroup.Audio);
                     break;
 
                 case 4:
-                    types.Add("Images");
+                    types.Add(AI.AssetGroup.Images);
                     break;
 
                 case 5:
-                    types.Add("Models");
+                    types.Add(AI.AssetGroup.Models);
                     break;
 
                 case 7:
@@ -83,10 +81,7 @@ namespace AssetInventory
             types.ForEach(t => searchPatterns.AddRange(AI.TypeGroups[t].Select(ext => $"*.{ext}")));
             string[] files = IOUtils.GetFiles(treatAsUnityProject ? Path.Combine(fullLocation, "Assets") : fullLocation, searchPatterns, SearchOption.AllDirectories).ToArray();
             int fileCount = files.Length;
-            if (!actAsSubImporter) MainProgress = 1; // small hack to trigger UI update in the end
             if (spec.createPreviews) UnityPreviewGenerator.Init(fileCount);
-
-            int progressId = MetaProgress.Start(actAsSubImporter ? "Updating files index" : "Updating media folder index");
 
             if (attachedAsset == null)
             {
@@ -119,11 +114,15 @@ namespace AssetInventory
             int specLength = fullLocation.Length + 1;
             Dictionary<string, List<AssetFile>> guidDict = ToGuidDict(existing);
             Dictionary<(string, int), AssetFile> pathIdDict = ToPathIdDict(existing);
-            string[] excludedExtensions = StringUtils.Split(AI.Config.excludedExtensions, new[] {';', ','});
+            string[] excludedExtensions = StringUtils.Split(spec.excludedExtensions, new[] {';', ','});
+            string[] excludedPreviewExtensions = StringUtils.Split(AI.Config.excludedPreviewExtensions, new[] {';', ','});
 
             // do actual indexing
             double nextBreak = 0;
             List<AssetFile> subPackages = new List<AssetFile>();
+
+            MainCount = fileCount;
+            long totalSize = 0;
             for (int i = 0; i < files.Length; i++)
             {
                 if (CancellationRequested) break;
@@ -131,7 +130,7 @@ namespace AssetInventory
                 {
                     nextBreak = EditorApplication.timeSinceStartup + BREAK_INTERVAL;
                     await Task.Yield(); // let editor breath in case many files are already indexed
-                    await Cooldown.Do();
+                    await AI.Cooldown.Do();
                 }
 
                 string file = files[i];
@@ -139,11 +138,9 @@ namespace AssetInventory
 
                 string type = IOUtils.GetExtensionWithoutDot(file).ToLowerInvariant();
                 if (type == "meta") continue; // never index .meta files
+                if (excludedExtensions.Contains(type)) continue;
 
-                MetaProgress.Report(progressId, i + 1, fileCount, file);
-                SubCount = fileCount;
-                CurrentSub = file;
-                SubProgress = i + 1;
+                SetProgress(file, i + 1);
 
                 string relPath = file.Substring(specLength);
 
@@ -161,9 +158,10 @@ namespace AssetInventory
                 AssetFile existingAf = Fetch(af, guidDict, pathIdDict);
                 if (existingAf != null && !spec.checkSize)
                 {
-                    if (attachedAsset.CurrentState != Asset.State.SubInProcess || (!existingAf.IsPackage() && !existingAf.IsArchive()))
+                    if (attachedAsset.CurrentState != Asset.State.SubInProcess || (!existingAf.IsUnityPackage() && !existingAf.IsArchive()))
                     {
                         // skip if already indexed and size check is disabled as it will slow down the process especially on dropbox folders significantly
+                        totalSize += existingAf.Size;
                         continue;
                     }
                 }
@@ -179,11 +177,12 @@ namespace AssetInventory
                     FileInfo fileInfo = new FileInfo(file);
                     fileInfo.Refresh(); // otherwise can cause sporadic FileNotFound exceptions
                     long size = fileInfo.Length;
+                    totalSize += size;
 
                     // reindex if file size changed
                     if (existingAf != null)
                     {
-                        if (attachedAsset.CurrentState != Asset.State.SubInProcess || (!existingAf.IsPackage() && !existingAf.IsArchive()))
+                        if (attachedAsset.CurrentState != Asset.State.SubInProcess || (!existingAf.IsUnityPackage() && !existingAf.IsArchive()))
                         {
                             if (existingAf.Size == size) continue;
                         }
@@ -196,9 +195,9 @@ namespace AssetInventory
                         af = existingAf;
                     }
 
-                    CurrentSub = file + " (" + EditorUtility.FormatBytes(size) + ")";
+                    CurrentMain = file + " (" + EditorUtility.FormatBytes(size) + ")";
                     if (i % 50 == 0) await Task.Yield(); // let editor breath
-                    MemoryObserver.Do(size);
+                    AI.MemoryObserver.Do(size);
 
                     af.FileName = Path.GetFileName(af.SourcePath);
                     af.Size = size;
@@ -209,7 +208,7 @@ namespace AssetInventory
                     }
                     Persist(af);
 
-                    if (af.IsPackage() || af.IsArchive()) subPackages.Add(af);
+                    if (af.IsUnityPackage() || af.IsArchive()) subPackages.Add(af);
                 }
                 catch (Exception e)
                 {
@@ -218,7 +217,7 @@ namespace AssetInventory
 
                 if (spec.createPreviews && PreviewManager.IsPreviewable(af.FileName, false))
                 {
-                    if (!AI.Config.excludePreviewExtensions || !excludedExtensions.Contains(type))
+                    if (!AI.Config.excludePreviewExtensions || !excludedPreviewExtensions.Contains(type))
                     {
                         AssetInfo info = new AssetInfo().CopyFrom(attachedAsset, af);
                         await PreviewManager.Create(info, file);
@@ -227,19 +226,22 @@ namespace AssetInventory
             }
             if (spec.createPreviews)
             {
-                CurrentSub = "Finalizing preview images...";
+                CurrentMain = "Finalizing preview images";
                 await UnityPreviewGenerator.ExportPreviews();
                 UnityPreviewGenerator.CleanUp();
-                SubCount = 0; // otherwise text remains shown during next extraction
             }
-            MetaProgress.Remove(progressId);
 
             if (attachedAsset.SafeName != Asset.NONE)
             {
                 // update date
                 attachedAsset = Fetch(attachedAsset);
-                attachedAsset.LastRelease = DateTime.Now;
                 attachedAsset.CurrentState = Asset.State.Done;
+
+                if (attachedAsset.AssetSource != Asset.Source.Archive)
+                {
+                    attachedAsset.LastRelease = DateTime.Now;
+                    attachedAsset.PackageSize = totalSize;
+                }
 
                 // update location of attached asset to reflect current spec
                 // but not for children as that would put extracted path into location
@@ -249,8 +251,6 @@ namespace AssetInventory
 
                 await AI.ProcessSubPackages(attachedAsset, subPackages);
             }
-
-            if (!actAsSubImporter) ResetState(true);
         }
     }
 }

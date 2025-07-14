@@ -15,7 +15,8 @@ namespace AssetInventory
             Redo = 2,
             Custom = 3,
             Error = 4,
-            NotApplicable = 5
+            NotApplicable = 5,
+            RedoMissing = 6
         }
 
         [PrimaryKey, AutoIncrement] public int Id { get; set; }
@@ -50,10 +51,12 @@ namespace AssetInventory
 
         public bool HasPreview(bool allowScheduled = false)
         {
-            return PreviewState == PreviewOptions.Custom || PreviewState == PreviewOptions.Provided || (allowScheduled && PreviewState == PreviewOptions.Redo);
+            return PreviewState == PreviewOptions.Custom
+                || PreviewState == PreviewOptions.Provided
+                || (allowScheduled && PreviewState == PreviewOptions.Redo);
         }
 
-        public bool IsPackage()
+        public bool IsUnityPackage()
         {
             return Type == "unitypackage";
         }
@@ -71,7 +74,9 @@ namespace AssetInventory
         public string GetPreviewFile(string previewFolder, bool animated = false)
         {
             string aniSign = animated ? "a" : string.Empty;
-            return IOUtils.ToLongPath(System.IO.Path.Combine(GetPreviewFolder(previewFolder), $"af{aniSign}-{Id}.png"));
+
+            // inline for performance
+            return IOUtils.ToLongPath(System.IO.Path.Combine(previewFolder, AssetId.ToString(), $"af{aniSign}-{Id}.png"));
         }
 
         public string GetPath(bool expanded)

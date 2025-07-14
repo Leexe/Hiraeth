@@ -16,19 +16,16 @@ namespace AssetInventory
 
         public async Task IndexRough(string path, bool fromAssetStore)
         {
-            ResetState(false);
-
             // pass 1: find latest cached packages
-            int progressId = MetaProgress.Start("Discovering packages");
             string[] packages = await Task.Run(() => Directory.GetFiles(path, "package.json", SearchOption.AllDirectories));
-            MainCount = packages.Length;
+
             bool tagsChanged = false;
+            MainCount = packages.Length;
             for (int i = 0; i < packages.Length; i++)
             {
                 if (CancellationRequested) break;
 
                 string package = packages[i].Replace("\\", "/");
-                MetaProgress.Report(progressId, i + 1, packages.Length, Path.GetFileName(Path.GetDirectoryName(package)));
                 if (i % BREAK_INTERVAL == 0) await Task.Yield(); // let editor breath
 
                 Package info = ReadPackageFile(package);
@@ -39,9 +36,7 @@ namespace AssetInventory
                 if (asset == null) continue;
 
                 // update progress only if really doing work to save refresh time in UI
-                CurrentMain = $"{info.name} - {info.version}";
-                MainCount = packages.Length;
-                MainProgress = i + 1;
+                SetProgress($"{info.name} - {info.version}", i + 1);
 
                 // handle tags
                 tagsChanged = tagsChanged || ApplyTags(asset, info, fromAssetStore);
@@ -58,16 +53,16 @@ namespace AssetInventory
                 asset.CurrentState = Asset.State.InProcess;
                 UpdateOrInsert(asset);
             }
-            MetaProgress.Remove(progressId);
 
             // pass 2: check for project packages which are not cached, e.g. git packages
             if (!CancellationRequested)
             {
-                progressId = MetaProgress.Start("Discovering additional packages");
+                RestartProgress("Discovering additional packages");
                 Dictionary<string, PackageInfo> packageCollection = AssetStore.GetProjectPackages();
                 if (packageCollection != null)
                 {
                     List<PackageInfo> projectPackages = packageCollection.Values.ToList();
+                    MainCount = projectPackages.Count;
                     for (int i = 0; i < projectPackages.Count; i++)
                     {
                         if (CancellationRequested) break;
@@ -75,8 +70,6 @@ namespace AssetInventory
                         PackageInfo package = projectPackages[i];
                         if (package.source == PackageSource.BuiltIn) continue;
 
-                        MainCount = projectPackages.Count;
-                        MetaProgress.Report(progressId, i + 1, projectPackages.Count, package.name);
                         if (i % BREAK_INTERVAL == 0) await Task.Yield(); // let editor breath
 
                         // create asset
@@ -97,8 +90,7 @@ namespace AssetInventory
                         }
 
                         // update progress only if really doing work to save refresh time in UI
-                        CurrentMain = $"{asset.SafeName} - {asset.Version}";
-                        MainProgress = i + 1;
+                        SetProgress($"{asset.SafeName} - {asset.Version}", i + 1);
 
                         if (!string.IsNullOrWhiteSpace(asset.Location)) asset.PackageSize = await IOUtils.GetFolderSize(asset.Location);
 
@@ -110,17 +102,13 @@ namespace AssetInventory
                 {
                     Debug.LogWarning("Could not retrieve list of project packages to scan.");
                 }
-                MetaProgress.Remove(progressId);
             }
 
             if (tagsChanged)
             {
                 Tagging.LoadTags();
-                Tagging.LoadTagAssignments();
+                Tagging.LoadAssignments();
             }
-
-            MetaProgress.Remove(progressId);
-            ResetState(true);
         }
 
         public static bool ApplyTags(Asset asset, Package info, bool fromAssetStore)
@@ -130,7 +118,7 @@ namespace AssetInventory
             {
                 foreach (string tag in info.keywords)
                 {
-                    if (Tagging.AddTagAssignment(asset.Id, tag, TagAssignment.Target.Package, fromAssetStore)) tagsChanged = true;
+                    if (Tagging.AddAssignment(asset.Id, tag, TagAssignment.Target.Package, fromAssetStore)) tagsChanged = true;
                 }
             }
             return tagsChanged;
@@ -163,11 +151,8 @@ namespace AssetInventory
 
         public async Task IndexDetails(int assetId = 0)
         {
-            ResetState(false);
-
             FolderSpec importSpec = GetDefaultImportSpec();
 
-            int progressId = MetaProgress.Start("Indexing packages");
             List<Asset> assets;
             if (assetId == 0)
             {
@@ -177,14 +162,14 @@ namespace AssetInventory
             {
                 assets = DBAdapter.DB.Table<Asset>().Where(a => a.Id == assetId && a.AssetSource == Asset.Source.RegistryPackage).ToList();
             }
+
+            MainCount = assets.Count;
             for (int i = 0; i < assets.Count; i++)
             {
                 Asset asset = assets[i];
                 if (CancellationRequested) break;
 
-                MainCount = assets.Count;
-                CurrentMain = $"{asset.SafeName} - {asset.Version}";
-                MainProgress = i + 1;
+                SetProgress($"{asset.SafeName} - {asset.Version}", i + 1);
 
                 // TODO: factually incorrect as indexed version does not need to correspond to latest version
                 if (Directory.Exists(asset.GetLocation(true)))
@@ -193,14 +178,16 @@ namespace AssetInventory
                     DBAdapter.DB.Execute("delete from AssetFile where AssetId=?", asset.Id);
 
                     importSpec.location = asset.GetLocation(true);
-                    await new MediaImporter().Index(importSpec, asset, false, true);
+
+                    MediaImporter mediaImporter = new MediaImporter();
+                    AI.Actions.RegisterRunningAction(ActionHandler.ACTION_MEDIA_FOLDERS_INDEX, mediaImporter, "Updating files index");
+                    await mediaImporter.Index(importSpec, asset, false, true);
+                    mediaImporter.FinishProgress();
                 }
-                if (CancellationRequested) break;
+                if (CancellationRequested) break; // do not mark done otherwise
 
                 MarkDone(asset);
             }
-            MetaProgress.Remove(progressId);
-            ResetState(true);
         }
 
         public static Package ReadPackageFile(string package)

@@ -107,25 +107,24 @@ namespace AssetInventory
         private string _newTag;
         private int _lastMainProgress;
         private string _importFolder;
-        private bool _previewInProgress;
+        private bool _blockingInProgress;
 
         private string[] _pvSelection;
         private string _pvSelectedPath;
         private string _pvSelectedFolder;
         private bool _pvSelectionChanged;
         private List<AssetInfo> _pvSelectedAssets;
-        private int _selectedFolderIndex = -1;
         private int _packageCount;
         private int _packageFileCount;
         private int _availablePackageUpdates;
         private int _activePackageDownloads;
 
-        private AssetPurchases _purchasedAssets = new AssetPurchases();
         private int _purchasedAssetsCount;
         private List<AssetInfo> _assets;
         private int _indexedPackageCount;
         private int _indexablePackageCount;
         private int _aiPackageCount;
+        private int _backupPackageCount;
 
         private static int _scriptsReloaded;
         private bool _requireAssetTreeRebuild;
@@ -140,9 +139,14 @@ namespace AssetInventory
         private bool _updateAvailable;
         private AssetDetails _onlineInfo;
         private bool _allowLogic;
+        private Editor _previewEditor;
 
         [MenuItem("Assets/Asset Inventory", priority = 9000)]
-        [MenuItem("Window/Asset Management/Asset Inventory", priority = 9000)]
+#if UNITY_6000_1_OR_NEWER
+        [MenuItem("Window/Package Management/Asset Inventory")]
+#else
+        [MenuItem("Window/Asset Inventory", priority = 1500)]
+#endif
         public static void ShowWindow()
         {
             IndexUI window = GetWindow<IndexUI>("Asset Inventory");
@@ -163,8 +167,7 @@ namespace AssetInventory
             AI.Init();
             InitFolderControl();
 
-            _previewInProgress = false;
-            AssetProgress.ResetState(true);
+            _blockingInProgress = false;
 
             _requireLookupUpdate = ChangeImpact.ReadOnly;
             _requireSearchUpdate = true;
@@ -176,13 +179,15 @@ namespace AssetInventory
         private void OnEnable()
         {
             EditorApplication.update += UpdateLoop;
-            AI.OnIndexingDone += OnIndexingDone;
+            AI.Actions.OnActionsDone += OnActionsDone;
+            AI.Actions.OnActionsInitialized += OnActionsInitialized;
             AI.OnPackageImageLoaded += OnPackageImageLoaded;
             AI.OnPackagesUpdated += OnPackagesUpdated;
             Tagging.OnTagsChanged += OnTagsChanged;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             EditorSceneManager.sceneOpened += OnSceneLoaded;
             ImportUI.OnImportDone += OnImportDone;
+            RemovalUI.OnUninstallDone += OnImportDone;
             MaintenanceUI.OnMaintenanceDone += OnMaintenanceDone;
             AssetStore.OnPackageListUpdated += OnPackageListUpdated;
             AssetDatabase.importPackageCompleted += ImportCompleted;
@@ -196,6 +201,7 @@ namespace AssetInventory
             DragAndDrop.AddDropHandler(OnProjectBrowserDrop);
             DragAndDrop.AddDropHandler(OnInspectorDrop);
 #endif
+            if (_usageCalculationInProgress && _usageCalculation == null) _usageCalculationInProgress = false; // process was interrupted
             _initDone = false;
 
             AI.StopAudio();
@@ -209,13 +215,15 @@ namespace AssetInventory
         private void OnDisable()
         {
             EditorApplication.update -= UpdateLoop;
-            AI.OnIndexingDone -= OnIndexingDone;
+            AI.Actions.OnActionsDone -= OnActionsDone;
+            AI.Actions.OnActionsInitialized -= OnActionsInitialized;
             AI.OnPackageImageLoaded -= OnPackageImageLoaded;
             AI.OnPackagesUpdated -= OnPackagesUpdated;
             Tagging.OnTagsChanged -= OnTagsChanged;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             EditorSceneManager.sceneOpened -= OnSceneLoaded;
             ImportUI.OnImportDone -= OnImportDone;
+            RemovalUI.OnUninstallDone -= OnImportDone;
             MaintenanceUI.OnMaintenanceDone -= OnMaintenanceDone;
             AssetStore.OnPackageListUpdated -= OnPackageListUpdated;
             AssetDatabase.importPackageCompleted -= ImportCompleted;
@@ -231,6 +239,17 @@ namespace AssetInventory
 #endif
             AI.StopAudio();
             AI.StopCacheObserver();
+
+            // delay as otherwise there will be Dispose() errors
+            EditorApplication.delayCall += () =>
+            {
+                if (_previewEditor != null) DestroyImmediate(_previewEditor);
+            };
+
+            // Cancel any ongoing operations
+            _textureLoading?.Cancel();
+            _textureLoading2?.Cancel();
+            _textureLoading3?.Cancel();
         }
 
         private void UpdateLoop()
@@ -349,27 +368,27 @@ namespace AssetInventory
 
             _requireLookupUpdate = ChangeImpact.None;
             _resultSizes = new[] {"-all-", string.Empty, "10", "25", "50", "100", "250", "500", "1000", "1500", "2000", "2500", "3000", "4000", "5000"};
-            _searchFields = new[] {"Asset Path", "File Name", "AI Caption"};
+            _searchFields = new[] {"Asset Path", "File Name"};
             _sortFields = new[] {"Asset Path", "File Name", "Size", "Type", "Length", "Width", "Height", "Color", "Category", "Last Updated", "Rating", "#Reviews", string.Empty, "-unsorted (fast)-"};
             _packageSortOptions = Enum.GetNames(typeof (AssetTreeViewControl.Columns)).Select(StringUtils.CamelCaseToWords).ToArray();
             _groupByOptions = new[] {"-none-", string.Empty, "Category", "Publisher", "Tag", "State", "Location"};
             _colorOptions = new[] {"-all-", "matching"};
-            _tileTitle = new[] {"-Intelligent-", string.Empty, "Asset Path", "File Name", "File Name without Extension", "AI Caption", string.Empty, "None"};
+            _tileTitle = new[] {"-Intelligent-", string.Empty, "Asset Path", "File Name", "File Name without Extension", "AI Caption or File Name", string.Empty, "None"};
             _dependencyOptions = new[] {"Never", "Upon Selection"};
             _previewOptions = new[] {"-all-", string.Empty, "Only With Preview", "Only Without Preview"};
             _doubleClickOptions = new[] {"-none-", "Import", "Open"};
             _packageListingOptions = new[] {"-all-", "-all except registry packages-", "Only Asset Store Packages", "Only Registry Packages", "Only Custom Packages", "Only Media Folders", "Only Archives", "Only Asset Manager"};
             _packageListingOptionsShort = new[] {new GUIContent("All", ""), new GUIContent("No Reg", _packageListingOptions[1]), new GUIContent("Store", _packageListingOptions[2]), new GUIContent("Reg", _packageListingOptions[3]), new GUIContent("Cust", _packageListingOptions[4]), new GUIContent("Media", _packageListingOptions[5]), new GUIContent("Arch", _packageListingOptions[6]), new GUIContent("AM", _packageListingOptions[7])};
-            _packageViewOptions = new[] {EditorGUIUtility.IconContent("d_VerticalLayoutGroup Icon", "|List"), EditorGUIUtility.IconContent("d_GridLayoutGroup Icon", "|Grid")};
-            _packageDetailsViewOptions = new[] {EditorGUIUtility.IconContent("d_GridLayoutGroup Icon", "|Tabs"), EditorGUIUtility.IconContent("d_VerticalLayoutGroup Icon", "|List")};
+            _packageViewOptions = new[] {UIStyles.IconContent("VerticalLayoutGroup Icon", "d_VerticalLayoutGroup Icon", "|List"), UIStyles.IconContent("GridLayoutGroup Icon", "d_GridLayoutGroup Icon", "|Grid")};
+            _packageDetailsViewOptions = new[] {UIStyles.IconContent("GridLayoutGroup Icon", "d_GridLayoutGroup Icon", "|Tabs"), UIStyles.IconContent("VerticalLayoutGroup Icon", "d_VerticalLayoutGroup Icon", "|List")};
             _deprecationOptions = new[] {"-all-", "Exclude Deprecated", "Show Only Deprecated"};
-            _srpOptions = new[] {"-all-", "BIRP", "URP", "HDRP"};
+            _srpOptions = new[] {"-all-", string.Empty, "BIRP", "URP", "HDRP"};
             _maintenanceOptions = new[] {"-all-", "Update Available", "Outdated in Unity Cache", "Disabled by Unity", "Custom Asset Store Link", "Indexed", "Not Indexed", "Custom Registry", "Downloaded", "Downloading", "Not Downloaded", "Duplicate", "Marked for Backup", "Not Marked for Backup", "Deleted", "Excluded", "With Sub-Packages", "Incompatible Packages", "Fixable Incompatibilities", "Unfixable Incompatibilities"};
             _importDestinationOptions = new[] {"Into Folder Selected in Project View", "Into Assets Root", "Into Specific Folder"};
             _importStructureOptions = new[] {"All Files Flat in Target Folder", "Keep Original Folder Structure"};
             _assetCacheLocationOptions = new[] {"Automatic", "Custom Folder"};
             _currencyOptions = new[] {"EUR", "USD", "CNY"};
-            _logOptions = new[] {"Media Downloads", "Image Resizing", "Audio Parsing", "Package Parsing"};
+            _logOptions = new[] {"Media Downloads", "Image Resizing", "Audio Parsing", "Package Parsing", "Custom Actions"};
             _blipOptions = new[] {"Small (1Gb)", "Large (1.8Gb)"};
             _gpuOptions = new[] {"-none-", string.Empty, "0", "1", "2"};
             _imageTypeOptions = new List<string> {"-all-", string.Empty}.Concat(TextureNameSuggester.suffixPatterns.Keys.Select(StringUtils.CamelCaseToWords)).ToArray();
@@ -455,9 +474,9 @@ namespace AssetInventory
                 return;
             }
 
-            if (UpgradeUtil.LongUpgradeRequired)
+            if (AI.UpgradeUtil.LongUpgradeRequired)
             {
-                UpgradeUtil.DrawUpgradeRequired();
+                AI.UpgradeUtil.DrawUpgradeRequired();
                 return;
             }
 
@@ -550,12 +569,15 @@ namespace AssetInventory
             }
 
             // reload if there is new data
-            if (!AssetProgress.ReadOnly && _lastMainProgress != AssetProgress.MainProgress)
+            // FIXME
+            /*
+            if (!ActionProgress.ReadOnly && _lastMainProgress != ActionProgress.MainProgress)
             {
-                _lastMainProgress = AssetProgress.MainProgress;
+                _lastMainProgress = ActionProgress.MainProgress;
                 _requireLookupUpdate = ChangeImpact.Write;
                 _requireSearchUpdate = true;
             }
+            */
 
             if (_allowLogic)
             {
@@ -623,7 +645,7 @@ namespace AssetInventory
                 "Search",
                 "Packages",
                 "Reporting",
-                "Settings" + (AI.CurrentMain != null || AI.IndexingInProgress ? " (indexing)" : "")
+                "Settings" + (AI.Actions.ActionsInProgress ? " (indexing)" : "")
             };
             AI.Config.tab = GUILayout.Toolbar(AI.Config.tab, strings.ToArray(), GUILayout.Height(32), GUILayout.MinWidth(500));
 
@@ -631,29 +653,30 @@ namespace AssetInventory
             if (newTab) AI.SaveConfig();
 
             GUILayout.FlexibleSpace();
+            int iconSize = 18;
             if (_updateAvailable && _onlineInfo != null && GUILayout.Button(UIStyles.Content($"v{_onlineInfo.version.name} available!", $"Released {_onlineInfo.version.publishedDate}"), EditorStyles.linkLabel))
             {
                 Application.OpenURL(AI.ASSET_STORE_LINK);
             }
-            if (_activePackageDownloads > 0 && GUILayout.Button(EditorGUIUtility.IconContent("Loading", $"|{_activePackageDownloads} Downloads Active"), EditorStyles.label))
+            if (_activePackageDownloads > 0 && GUILayout.Button(EditorGUIUtility.IconContent("Loading", $"|{_activePackageDownloads} Downloads Active"), EditorStyles.label, GUILayout.Width(iconSize), GUILayout.Height(iconSize)))
             {
                 AI.Config.tab = 1;
                 _selectedMaintenance = 9;
                 _requireAssetTreeRebuild = true;
-                AI.Config.showPackageFilterBar = true;
+                _packageInspectorTab = 1;
                 AI.SaveConfig();
             }
-            if (_availablePackageUpdates > 0 && GUILayout.Button(EditorGUIUtility.IconContent("Update-Available", $"|{_availablePackageUpdates} Updates Available"), EditorStyles.label))
+            if (_availablePackageUpdates > 0 && GUILayout.Button(UIStyles.IconContent("preAudioLoopOff", "Update-Available", $"|{_availablePackageUpdates} Updates Available"), EditorStyles.label, GUILayout.Width(iconSize), GUILayout.Height(iconSize)))
             {
                 AI.Config.tab = 1;
                 _selectedMaintenance = 1;
                 _requireAssetTreeRebuild = true;
-                AI.Config.showPackageFilterBar = true;
+                _packageInspectorTab = 1;
                 AI.SaveConfig();
             }
             UILine("toolbar.toggleadvanced", () =>
             {
-                if (GUILayout.Button(EditorGUIUtility.IconContent(AI.Config.hideAdvanced ? "d_animationvisibilitytoggleoff" : "d_animationvisibilitytoggleon", "|Visibility of Advanced Features" + (AI.Config.hideAdvanced ? " - Hold CTRL to show temporarily" : "")), EditorStyles.label))
+                if (GUILayout.Button(UIStyles.IconContent(AI.Config.hideAdvanced ? "animationvisibilitytoggleoff" : "animationvisibilitytoggleon", AI.Config.hideAdvanced ? "d_animationvisibilitytoggleoff" : "d_animationvisibilitytoggleon", "|Visibility of Advanced Features" + (AI.Config.hideAdvanced ? " - Hold CTRL to show temporarily" : "")), EditorStyles.label, GUILayout.Width(iconSize), GUILayout.Height(iconSize)))
                 {
                     AI.Config.hideAdvanced = !AI.Config.hideAdvanced;
                     AI.SaveConfig();
@@ -663,7 +686,7 @@ namespace AssetInventory
             {
                 Color curCol = GUI.color;
                 if (AI.UICustomizationMode) GUI.color = Color.green;
-                if (GUILayout.Button(EditorGUIUtility.IconContent("d_CustomTool", "|Toggle UI Customization"), EditorStyles.label))
+                if (GUILayout.Button(UIStyles.IconContent("CustomTool", "d_CustomTool", "|Toggle UI Customization"), EditorStyles.label, GUILayout.Width(iconSize), GUILayout.Height(iconSize)))
                 {
                     AI.UICustomizationMode = !AI.UICustomizationMode;
                 }
@@ -671,7 +694,7 @@ namespace AssetInventory
             });
             UILine("toolbar.toggleabout", () =>
             {
-                if (GUILayout.Button(EditorGUIUtility.IconContent("_Help", "|About"), EditorStyles.label))
+                if (GUILayout.Button(EditorGUIUtility.IconContent("_Help", "|About"), EditorStyles.label, GUILayout.Width(iconSize), GUILayout.Height(iconSize)))
                 {
                     if (_lastTab >= 0)
                     {
@@ -698,29 +721,6 @@ namespace AssetInventory
                     , "Leave Review", "Maybe Later"))
             {
                 Application.OpenURL(AI.ASSET_STORE_LINK);
-            }
-        }
-
-        private async void FetchAssetPurchases(bool forceUpdate)
-        {
-            AssetPurchases result = await AI.FetchOnlineAssets();
-            if (AssetStore.CancellationRequested || result == null) return;
-
-            _purchasedAssets = result;
-            _purchasedAssetsCount = _purchasedAssets?.total ?? 0;
-            ReloadLookups();
-            FetchAssetDetails(forceUpdate);
-        }
-
-        private async void FetchAssetDetails(bool forceUpdate = false, int assetId = 0, bool skipEvents = false)
-        {
-            await AI.FetchAssetsDetails(forceUpdate, assetId, assetId > 0, skipEvents);
-
-            // skip in optional update scenarios like when user selects something in the tree to avoid hickups 
-            if (!skipEvents)
-            {
-                ReloadLookups();
-                _requireAssetTreeRebuild = true;
             }
         }
 

@@ -5,7 +5,6 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
-using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -28,8 +27,10 @@ namespace AssetInventory
             Missing = 2,
             Importing = 3,
             Imported = 4,
-            Failed = 5,
-            Cancelled = 6
+            Uninstalling = 5,
+            Uninstalled = 6,
+            Failed = 7,
+            Cancelled = 8
         }
 
         public enum DependencyStateOptions
@@ -79,7 +80,7 @@ namespace AssetInventory
         public DateTime LastRelease { get; set; }
         public DateTime PurchaseDate { get; set; }
         public DateTime FirstRelease { get; set; }
-        public string AssetRating { get; set; }
+        public float AssetRating { get; set; }
         public int RatingCount { get; set; }
         public float Hotness { get; set; }
         public float PriceEur { get; set; }
@@ -93,7 +94,7 @@ namespace AssetInventory
         public bool Backup { get; set; }
         public bool KeepExtracted { get; set; }
         public bool UseAI { get; set; }
-        public string UploadId { get; set; }
+        public int UploadId { get; set; }
         public string ETag { get; set; }
         public DateTime LastOnlineRefresh { get; set; }
         public int FileCount { get; set; }
@@ -129,9 +130,12 @@ namespace AssetInventory
         public List<AssetMedia> Media { get; set; }
 
         private bool _tagsDone;
+        private bool _metadataDone;
         private List<TagInfo> _packageTags;
         private List<TagInfo> _assetTags;
+        private List<MetadataInfo> _packageMetadata;
         private int _tagHash;
+        private int _metadataHash;
         private string _packageSamplesLoaded;
         private IEnumerable<UnityEditor.PackageManager.UI.Sample> _packageSamples;
         private List<Dependency> _packageDependencies;
@@ -145,8 +149,17 @@ namespace AssetInventory
                 return _packageTags;
             }
         }
-
         internal void SetTagsDirty() => _tagsDone = false;
+
+        public List<MetadataInfo> PackageMetadata
+        {
+            get
+            {
+                EnsureMetadataLoaded();
+                return _packageMetadata;
+            }
+        }
+        internal void SetMetadataDirty() => _metadataDone = false;
 
         public List<TagInfo> AssetTags
         {
@@ -285,7 +298,7 @@ namespace AssetInventory
             if (string.IsNullOrWhiteSpace(SupportedUnityVersions)) return true;
             string[] arr = SupportedUnityVersions.Split(new[] {", "}, StringSplitOptions.None); // 2019.4 C# syntax
 
-            return new SemVer(arr[0]) <= new SemVer(Application.unityVersion);
+            return new SemVer(arr[0]).WithOnlyMinor() <= new SemVer(Application.unityVersion);
         }
 
         private string _forcedTargetVersion;
@@ -308,7 +321,7 @@ namespace AssetInventory
         {
             if (ParentId > 0 && ParentInfo != null && (ForeignId == 0 || ForeignId == ParentInfo.ForeignId))
             {
-                return ParentInfo;
+                return ParentInfo.GetRoot();
             }
             return this;
         }
@@ -346,12 +359,22 @@ namespace AssetInventory
 
         private void EnsureTagsLoaded()
         {
-            if (!_tagsDone || AI.TagHash != _tagHash)
+            if (!_tagsDone || Tagging.TagHash != _tagHash)
             {
-                _assetTags = Tagging.GetAssetTags(Id);
+                if (!IsPackage()) _assetTags = Tagging.GetAssetTags(Id);
                 _packageTags = Tagging.GetPackageTags(AssetId);
                 _tagsDone = true;
-                _tagHash = AI.TagHash;
+                _tagHash = Tagging.TagHash;
+            }
+        }
+
+        private void EnsureMetadataLoaded()
+        {
+            if (!_metadataDone || Metadata.MetadataHash != _metadataHash)
+            {
+                _packageMetadata = Metadata.GetPackageMetadata(AssetId);
+                _metadataDone = true;
+                _metadataHash = Metadata.MetadataHash;
             }
         }
 
@@ -395,6 +418,7 @@ namespace AssetInventory
         public string TargetPackageVersion()
         {
             if (AssetSource != Asset.Source.RegistryPackage) return null;
+            if (PackageSource == PackageSource.Local || PackageSource == PackageSource.LocalTarball) return null;
             if (!string.IsNullOrEmpty(_forcedTargetVersion)) return _forcedTargetVersion;
 
             PackageInfo pInfo = AssetStore.GetPackageInfo(this);
@@ -674,32 +698,32 @@ namespace AssetInventory
             {
                 if (IsFeaturePackage())
                 {
-                    result = EditorGUIUtility.IconContent("d_Asset Store@2x").image;
+                    result = UIStyles.IconContent("Asset Store@2x", "d_Asset Store@2x").image;
                 }
                 else
                 {
                 #if UNITY_2020_1_OR_NEWER
-                    result = EditorGUIUtility.IconContent("d_Package Manager@2x").image;
+                    result = UIStyles.IconContent("Package Manager@2x", "d_Package Manager@2x").image;
                 #else
-                    result = EditorGUIUtility.IconContent("d_PreMatCube@2x").image;
+                    result = UIStyles.IconContent("PreMatCube@2x", "d_PreMatCube@2x").image;
                 #endif
                 }
             }
             else if (AssetSource == Asset.Source.Archive)
             {
-                result = EditorGUIUtility.IconContent("d_FilterByType@2x").image;
+                result = UIStyles.IconContent("FilterByType@2x", "d_FilterByType@2x").image;
             }
             else if (AssetSource == Asset.Source.Directory)
             {
-                result = EditorGUIUtility.IconContent("d_Folder Icon").image;
+                result = UIStyles.IconContent("Folder Icon", "d_Folder Icon").image;
             }
             else if (AssetSource == Asset.Source.CustomPackage)
             {
-                result = EditorGUIUtility.IconContent("d_ModelImporter Icon").image;
+                result = UIStyles.IconContent("ModelImporter Icon", "d_ModelImporter Icon").image;
             }
             else if (AssetSource == Asset.Source.AssetManager)
             {
-                result = EditorGUIUtility.IconContent("d_CloudConnect").image;
+                result = UIStyles.IconContent("CloudConnect", "d_CloudConnect").image;
             }
 
             return result;
@@ -707,6 +731,7 @@ namespace AssetInventory
 
         public Asset ToAsset()
         {
+            // TODO: reflection?
             Asset result = new Asset
             {
                 AssetSource = AssetSource,
@@ -770,6 +795,8 @@ namespace AssetInventory
 
         public string GetItemLink()
         {
+            if (ForeignId == 0) return null;
+
             return $"https://assetstore.unity.com/packages/slug/{ForeignId}";
         }
 
@@ -782,7 +809,7 @@ namespace AssetInventory
         {
             if (AssetSource != Asset.Source.AssetManager) return null;
 
-            return $"https://cloud.unity.com/home/organizations/{OriginalLocationKey}";
+            return $"{AI.CLOUD_HOME_URL}/{OriginalLocationKey}";
         }
 
         public string GetAMProjectUrl()
@@ -813,27 +840,27 @@ namespace AssetInventory
         {
             AssetType result = AssetType.Other;
 
-            if (AI.TypeGroups["Audio"].Contains(Type))
+            if (AI.TypeGroups[AI.AssetGroup.Audio].Contains(Type))
             {
                 result = AssetType.Audio;
             }
-            else if (AI.TypeGroups["Models"].Contains(Type))
+            else if (AI.TypeGroups[AI.AssetGroup.Models].Contains(Type))
             {
                 result = AssetType.Model_3D;
             }
-            else if (AI.TypeGroups["Images"].Contains(Type))
+            else if (AI.TypeGroups[AI.AssetGroup.Images].Contains(Type))
             {
                 result = AssetType.Asset_2D;
             }
-            else if (AI.TypeGroups["Materials"].Contains(Type))
+            else if (AI.TypeGroups[AI.AssetGroup.Materials].Contains(Type))
             {
                 result = AssetType.Material;
             }
-            else if (AI.TypeGroups["Scripts"].Contains(Type))
+            else if (AI.TypeGroups[AI.AssetGroup.Scripts].Contains(Type))
             {
                 result = AssetType.Script;
             }
-            else if (AI.TypeGroups["Videos"].Contains(Type))
+            else if (AI.TypeGroups[AI.AssetGroup.Videos].Contains(Type))
             {
                 result = AssetType.Video;
             }
@@ -866,6 +893,8 @@ namespace AssetInventory
 
         public string GetPriceText(float priceVal)
         {
+            if (priceVal <= 0) return "free";
+
             string price = priceVal.ToString("N2");
             switch (AI.Config.currency)
             {
@@ -887,6 +916,7 @@ namespace AssetInventory
             _updateAvailableForced = null;
             _updateAvailableList = null;
             _updateAvailableListForced = null;
+            _forcedTargetVersion = null;
 
             PackageDownloader?.SetAsset(this);
 
@@ -903,12 +933,12 @@ namespace AssetInventory
         internal int GetFolderSpecType()
         {
             if (IsArchive()) return 2;
-            if (IsPackage()) return 0;
+            if (IsUnityPackage()) return 0;
 
             return 1;
         }
 
-        public bool IsAsset()
+        public bool IsPackage()
         {
             return string.IsNullOrEmpty(FileName);
         }
@@ -968,7 +998,7 @@ namespace AssetInventory
 
         public override string ToString()
         {
-            if (IsAsset())
+            if (IsPackage())
             {
                 return $"Asset Package '{GetDisplayName()}' ({AssetId}, {FileCount} files)";
             }
